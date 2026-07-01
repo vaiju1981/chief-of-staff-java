@@ -1,0 +1,33 @@
+# Version catalog — single source of truth for dependency versions.
+# Bump versions here; the build references them via the generated `libs.*` accessors.
+
+[versions]
+agent = "0.5.0"          # io.github.vaiju1981 java-ai-agent, on Maven Central
+springboot = "4.1.0"
+junit = "6.1.0"
+langchain4jMcp = "1.16.3-beta26"   # matches java-ai-agent's catalog (MCP stdio client)
+postgresql = "42.7.11"
+
+[libraries]
+# java-ai-agent — the framework this app is built on (dogfooded).
+agent-core = { module = "io.github.vaiju1981:agent-core", version.ref = "agent" }
+agent-langchain4j = { module = "io.github.vaiju1981:agent-langchain4j", version.ref = "agent" }
+agent-tools-annotations = { module = "io.github.vaiju1981:agent-tools-annotations", version.ref = "agent" }
+agent-mcp = { module = "io.github.vaiju1981:agent-mcp", version.ref = "agent" }
+agent-store-pgvector = { module = "io.github.vaiju1981:agent-store-pgvector", version.ref = "agent" }
+agent-store-jdbc = { module = "io.github.vaiju1981:agent-store-jdbc", version.ref = "agent" }
+# MCP stdio client (create the McpClient that agent-mcp's McpTools.from wraps).
+langchain4j-mcp = { module = "dev.langchain4j:langchain4j-mcp", version.ref = "langchain4jMcp" }
+# Postgres JDBC driver (pgvector RAG store talks to it via DriverManager).
+postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
+# Still deferred: agent-spring-boot-starter (SSE/turn plumbing) — not needed yet.
+
+# Spring Boot — managed via its BOM (applied as a Gradle platform), matching java-ai-agent.
+spring-boot-bom = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springboot" }
+spring-boot-web = { module = "org.springframework.boot:spring-boot-starter-webmvc" }
+spring-boot-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator" }
+spring-boot-test = { module = "org.springframework.boot:spring-boot-starter-test" }
+
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-launcher = { module = "org.junit.platform:junit-platform-launcher" }

@@ -1,0 +1,42 @@
+# Infra for chief-of-staff-java. The agent server itself runs on the HOST (./gradlew run on :8002);
+# these are the stateful backends it talks to.
+#   - postgres (pgvector): RAG vector store for researcher / notes.
+#   - open-webui: the chat UI, pointed at the host agent server's OpenAI endpoint.
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: cosjava-postgres
+    environment:
+      POSTGRES_DB: chief_of_staff
+      POSTGRES_USER: cos
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-cos_local_dev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - cosjava-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cos"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    restart: unless-stopped
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: cosjava-webui
+    ports:
+      - "3000:8080"
+    environment:
+      # The agent server runs on the host; reach it from inside the container.
+      OPENAI_API_BASE_URL: http://host.docker.internal:8002/v1
+      OPENAI_API_KEY: dummy
+      WEBUI_NAME: Chief of Staff (Java)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - cosjava-webui:/app/backend/data
+    restart: unless-stopped
+
+volumes:
+  cosjava-postgres:
+  cosjava-webui:

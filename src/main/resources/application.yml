@@ -1,0 +1,33 @@
+spring:
+  application:
+    name: chief-of-staff-java
+
+server:
+  # Mirrors the Python agents server port, so Open WebUI / LiteLLM configs line up.
+  port: ${COS_PORT:8002}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+cos:
+  ollama-base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+  # Chat model — Ollama cloud model, replacing granite. Runs on Ollama's servers.
+  model: ${COS_MODEL:gemma4:31b-cloud}
+  # RAG embeddings — local. granite-embedding:30m is 384-dim.
+  embedding-model: ${COS_EMBEDDING_MODEL:granite-embedding:30m}
+  embedding-dimensions: ${COS_EMBEDDING_DIMENSIONS:384}
+  # Optional Llama Guard model for input/output safety (applied via Trust.govern in a later step).
+  guard-model: ${COS_GUARD_MODEL:llama-guard3:1b}
+  # Postgres + pgvector (RAG store). Defaults match docker/compose.yml.
+  db-url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/chief_of_staff}
+  db-user: ${DATABASE_USER:cos}
+  db-password: ${DATABASE_PASSWORD:cos_local_dev}
+  # Root for the MCP filesystem server + the RAG library/vault.
+  data-dir: ${COS_DATA_DIR:data}
+  # MCP tokens (blank disables that server). start.sh sources these from .env.
+  github-token: ${GITHUB_TOKEN:}
+  tavily-api-key: ${TAVILY_API_KEY:}

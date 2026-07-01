@@ -1,0 +1,14 @@
+# Keep Gradle dependencies and GitHub Actions up to date. Pairs with the dependency-submission
+# workflow (which feeds the dependency graph so Dependabot can also flag vulnerable transitives).
+version: 2
+updates:
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5

@@ -1,0 +1,17 @@
+# Gradle
+.gradle/
+build/
+# keep the wrapper jar tracked
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS / runtime
+.DS_Store
+*.log
+var/
+data/
+.env
