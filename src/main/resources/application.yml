@@ -20,6 +20,8 @@ cos:
   # RAG embeddings — local. granite-embedding:30m is 384-dim.
   embedding-model: ${COS_EMBEDDING_MODEL:granite-embedding:30m}
   embedding-dimensions: ${COS_EMBEDDING_DIMENSIONS:384}
+  # gemma context window (num_ctx). 256K so long outputs aren't truncated. num_predict is never set.
+  num-ctx: ${COS_NUM_CTX:262144}
   # Optional Llama Guard model for input/output safety (applied via Trust.govern in a later step).
   guard-model: ${COS_GUARD_MODEL:llama-guard3:1b}
   # Postgres + pgvector (RAG store). Defaults match docker/compose.yml.

@@ -43,10 +43,14 @@ public final class SupervisorPrompts {
                 "What's the difference between RNN and Transformer? -> researcher",
                 "Search news about Granite 4 -> researcher"));
 
-        CATALOG.put("comms", "pure writing (email, message, announcement, short note); no retrieval");
+        CATALOG.put("comms", "writing content directly — emails, messages, announcements, notes, AND "
+                + "long-form articles / reports / essays / deep-dives of ANY length. No retrieval. This is "
+                + "where writing actually gets DONE (the model writes the full text here).");
         EXAMPLES.put("comms", List.of(
                 "Draft an email to cancel the meeting -> comms",
-                "Write a message to my team announcing the project -> comms"));
+                "Write a message to my team announcing the project -> comms",
+                "Write a 4000-word deep-dive on transformer positional encodings -> comms",
+                "Write a detailed 5000-word article on X -> comms"));
 
         CATALOG.put("notes", "exploration and search inside the notes vault (meetings, personal projects, "
                 + "daily notes)");
@@ -58,12 +62,13 @@ public final class SupervisorPrompts {
                 "How do I implement an LRU cache in Python? -> code",
                 "Create an issue on repo Y for this bug -> code"));
 
-        CATALOG.put("handoff", "builds an enriched prompt for Claude.ai / ChatGPT; use for HEAVY tasks "
-                + "beyond local capabilities: long-form writing (>1000 words), deep analyses, complex "
-                + "reasoning, large document analysis");
+        CATALOG.put("handoff", "ONLY when the user EXPLICITLY asks to prepare / build / give them a PROMPT "
+                + "to paste into Claude.ai or ChatGPT. NOT for writing content here — writing (even long "
+                + "articles) is comms.");
         EXAMPLES.put("handoff", List.of(
-                "Write a 5000-word scientific article on transformers -> handoff",
-                "Do a deep analysis of this paper on attention -> handoff"));
+                "Prepare a prompt for Claude.ai about transformer attention -> handoff",
+                "Give me a ChatGPT prompt to write my article -> handoff",
+                "Build me a prompt I can paste into Claude -> handoff"));
 
         CATALOG.put("meeting", "to PILOT a meeting recording in real time (start / stop / status of the "
                 + "recorder). Different from meta_recording, which answers ABSTRACT questions");

@@ -6,11 +6,14 @@ import dev.vaijanath.aiagent.agent.AgentResponse;
 import dev.vaijanath.aiagent.model.Message;
 import dev.vaijanath.aiagent.model.ModelPort;
 import dev.vaijanath.aiagent.model.ModelRequest;
+import dev.vaijanath.aiagent.model.ModelResponse;
+import dev.vaijanath.aiagent.model.StreamingModelPort;
 import dev.vaijanath.aiagent.model.StructuredOutput;
 import dev.vaijanath.chiefofstaff.prompt.SupervisorPrompts;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,19 +22,31 @@ import org.slf4j.LoggerFactory;
  * answers meta / meta_recording questions itself by reformulating fixed facts into the user's language.
  *
  * <p>Routing prefers typed {@link StructuredOutput} (no fragile parsing), then falls back to a
- * single-token chat classification, then to {@code meta} (a safe presentation, never a tool-calling
- * agent) — the same defensive ladder as the Python version.
+ * single-token chat classification, then to {@code meta}. Streaming ({@link Streamable}) streams the
+ * meta answers and any streamable specialist; tool agents fall back to a single final chunk.
  */
-public final class Supervisor implements Agent {
+public final class Supervisor implements Agent, Streamable {
 
     private static final Logger log = LoggerFactory.getLogger(Supervisor.class);
 
+    private static final String META_GUIDANCE =
+            "End with an open question like \"What can I do for you?\" in the user's language.";
+    private static final String MEETING_GUIDANCE =
+            "Highlight the local automated pipeline first. Keep any terminal commands EXACTLY as written "
+                    + "— do not translate commands.";
+
     private final ModelPort model;
+    private final StreamingModelPort streamingModel;
     private final StructuredOutput router;
     private final Map<String, Agent> specialists;
 
-    public Supervisor(ModelPort model, StructuredOutput router, Map<String, Agent> specialists) {
+    public Supervisor(
+            ModelPort model,
+            StreamingModelPort streamingModel,
+            StructuredOutput router,
+            Map<String, Agent> specialists) {
         this.model = model;
+        this.streamingModel = streamingModel;
         this.router = router;
         this.specialists = specialists;
     }
@@ -41,31 +56,51 @@ public final class Supervisor implements Agent {
 
     @Override
     public AgentResponse run(AgentRequest request) {
-        String message = request.input() == null ? "" : request.input().strip();
+        String message = clean(request);
         if (isAutoRequest(message)) {
-            // Open WebUI auto-generated title/tag/follow-up request — not a real user turn.
             return AgentResponse.completed("[]");
         }
-
         String route = route(message);
         log.info("[supervisor] route -> {}", route);
-
         return switch (route) {
-            case "meta" -> AgentResponse.completed(reformulate(
-                    SupervisorPrompts.SYSTEM_FACTS,
-                    "End with an open question like \"What can I do for you?\" in the user's language.",
-                    message));
-            case "meta_recording" -> AgentResponse.completed(reformulate(
-                    SupervisorPrompts.MEETING_FACTS,
-                    "Highlight the local automated pipeline first. Keep any terminal commands EXACTLY as "
-                            + "written — do not translate commands.",
-                    message));
+            case "meta" -> AgentResponse.completed(
+                    reformulate(SupervisorPrompts.SYSTEM_FACTS, META_GUIDANCE, message));
+            case "meta_recording" -> AgentResponse.completed(
+                    reformulate(SupervisorPrompts.MEETING_FACTS, MEETING_GUIDANCE, message));
             default -> {
                 Agent specialist = specialists.get(route);
-                // route() only returns validated ids, so specialist is present; guard defensively anyway.
                 yield specialist != null
                         ? specialist.run(request)
-                        : AgentResponse.completed(reformulate(SupervisorPrompts.SYSTEM_FACTS, "", message));
+                        : AgentResponse.completed(reformulate(SupervisorPrompts.SYSTEM_FACTS, META_GUIDANCE, message));
+            }
+        };
+    }
+
+    @Override
+    public AgentResponse runStreaming(AgentRequest request, Consumer<String> onToken) {
+        String message = clean(request);
+        if (isAutoRequest(message)) {
+            onToken.accept("[]");
+            return AgentResponse.completed("[]");
+        }
+        String route = route(message);
+        log.info("[supervisor] route -> {} (streaming)", route);
+        return switch (route) {
+            case "meta" -> streamReformulation(SupervisorPrompts.SYSTEM_FACTS, META_GUIDANCE, message, onToken);
+            case "meta_recording" -> streamReformulation(
+                    SupervisorPrompts.MEETING_FACTS, MEETING_GUIDANCE, message, onToken);
+            default -> {
+                Agent specialist = specialists.get(route);
+                if (specialist instanceof Streamable streamable) {
+                    yield streamable.runStreaming(request, onToken);
+                }
+                if (specialist != null) {
+                    // Tool agents (researcher / notes) + handoff aren't streamable → run, emit once.
+                    AgentResponse response = specialist.run(request);
+                    onToken.accept(response.output());
+                    yield response;
+                }
+                yield streamReformulation(SupervisorPrompts.SYSTEM_FACTS, META_GUIDANCE, message, onToken);
             }
         };
     }
@@ -118,10 +153,23 @@ public final class Supervisor implements Agent {
     }
 
     private String reformulate(String facts, String guidance, String userMessage) {
-        ModelRequest request = ModelRequest.of(List.of(
+        return model.chat(reformulationRequest(facts, guidance, userMessage)).text();
+    }
+
+    private AgentResponse streamReformulation(
+            String facts, String guidance, String userMessage, Consumer<String> onToken) {
+        ModelResponse response = streamingModel.chatStream(reformulationRequest(facts, guidance, userMessage), onToken);
+        return AgentResponse.completed(response.text());
+    }
+
+    private ModelRequest reformulationRequest(String facts, String guidance, String userMessage) {
+        return ModelRequest.of(List.of(
                 Message.system(SupervisorPrompts.reformulation(facts, guidance)),
                 Message.user(userMessage)));
-        return model.chat(request).text();
+    }
+
+    private static String clean(AgentRequest request) {
+        return request.input() == null ? "" : request.input().strip();
     }
 
     /** Lowercase and strip everything but a–z and underscore (so {@code meta_recording} survives). */

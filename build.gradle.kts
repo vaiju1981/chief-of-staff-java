@@ -19,6 +19,7 @@ dependencies {
     implementation(libs.agent.mcp)
     implementation(libs.agent.store.pgvector)
     implementation(libs.agent.store.jdbc)
+    implementation(libs.langchain4j.ollama)
     implementation(libs.langchain4j.mcp)
     runtimeOnly(libs.postgresql)
     implementation(libs.spring.boot.web)

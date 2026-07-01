@@ -4,11 +4,19 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vaijanath.aiagent.agent.Agent;
 import dev.vaijanath.aiagent.agent.AgentRequest;
+import dev.vaijanath.chiefofstaff.agent.Streamable;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import org.springframework.http.MediaType;
+import java.util.function.Consumer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,23 +24,26 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * OpenAI Chat Completions surface, ported from the Python {@code server.py}. Each agent is exposed as
- * a "model" named {@code agent-<x>}, so it appears in the Open WebUI model picker and any
- * OpenAI-compatible client (including LiteLLM) can call it.
+ * OpenAI Chat Completions surface, ported from the Python {@code server.py}. Each agent is a "model"
+ * named {@code agent-<x>}. When {@code stream:true}, tokens are written as SSE chunks for agents that
+ * implement {@link Streamable} (the tool-less generators + the supervisor's meta answers); tool agents
+ * fall back to a single final chunk.
+ *
+ * <p>The stream is written directly to the servlet output stream (not a {@code StreamingResponseBody}
+ * wrapped in a {@code ResponseEntity<?>}, whose wildcard hides the type from Spring's streaming handler).
  */
 @RestController
 class ChatController {
 
+    private static final Logger log = LoggerFactory.getLogger(ChatController.class);
+
     private final Map<String, Agent> agents;
-    // Instantiated directly (not injected): Spring Boot 4 doesn't expose a com.fasterxml ObjectMapper
-    // bean, and this is only used to serialize the small SSE chunks below.
     private final ObjectMapper json = new ObjectMapper();
 
     ChatController(Map<String, Agent> agents) {
         this.agents = agents;
     }
 
-    /** Open WebUI / LiteLLM call this to discover the available agents. */
     @GetMapping("/v1/models")
     Map<String, Object> models() {
         long created = System.currentTimeMillis() / 1000;
@@ -44,7 +55,7 @@ class ChatController {
     }
 
     @PostMapping("/v1/chat/completions")
-    ResponseEntity<?> chat(@RequestBody ChatRequest req) {
+    ResponseEntity<?> chat(@RequestBody ChatRequest req, HttpServletResponse response) throws IOException {
         Agent agent = agents.get(req.model());
         if (agent == null) {
             return ResponseEntity.status(404).body(Map.of("error", "Unknown agent: " + req.model()));
@@ -54,22 +65,42 @@ class ChatController {
             return ResponseEntity.badRequest().body(Map.of("error", "No user message found"));
         }
 
-        String answer = agent.run(new AgentRequest(userMessage)).output();
         String id = "chatcmpl-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         long created = System.currentTimeMillis() / 1000;
 
         if (Boolean.TRUE.equals(req.stream())) {
-            // Single-chunk SSE — matches the Python server (no true token streaming yet).
-            return ResponseEntity.ok()
-                    .contentType(MediaType.TEXT_EVENT_STREAM)
-                    .body(sse(id, created, req.model(), answer));
+            response.setContentType("text/event-stream");
+            response.setCharacterEncoding("UTF-8");
+            response.setHeader("Cache-Control", "no-cache");
+            streamTo(response.getOutputStream(), agent, userMessage, id, created, req.model());
+            return null; // response already written
         }
+        String answer = agent.run(new AgentRequest(userMessage)).output();
         return ResponseEntity.ok(completion(id, created, req.model(), answer));
     }
 
     @GetMapping("/health")
     Map<String, Object> health() {
         return Map.of("status", "ok", "agents", List.copyOf(agents.keySet()));
+    }
+
+    /** Streams the agent's answer as OpenAI SSE chunks, then the terminal stop chunk and {@code [DONE]}. */
+    private void streamTo(OutputStream out, Agent agent, String userMessage, String id, long created, String model) {
+        Consumer<String> onToken = token -> writeEvent(out, chunkJson(id, created, model, token, null));
+        try {
+            if (agent instanceof Streamable streamable) {
+                streamable.runStreaming(new AgentRequest(userMessage), onToken);
+            } else {
+                // Not streamable (tool agents) — run and emit the whole answer as one chunk.
+                onToken.accept(agent.run(new AgentRequest(userMessage)).output());
+            }
+            writeEvent(out, chunkJson(id, created, model, null, "stop"));
+            writeRaw(out, "data: [DONE]\n\n");
+        } catch (UncheckedIOException e) {
+            log.info("stream client disconnected: {}", e.getMessage());
+        } catch (RuntimeException e) {
+            log.warn("stream failed", e);
+        }
     }
 
     /** The last user-role message, mirroring the Python {@code for m in reversed(messages)} loop. */
@@ -99,33 +130,41 @@ class ChatController {
         return out;
     }
 
-    private String sse(String id, long created, String model, String answer) {
+    /** One streaming chunk: a content delta (finishReason null), or the terminal empty delta (stop). */
+    private String chunkJson(String id, long created, String model, String token, String finishReason) {
+        Map<String, Object> delta = new LinkedHashMap<>();
+        if (token != null) {
+            delta.put("role", "assistant");
+            delta.put("content", token);
+        }
+        Map<String, Object> choice = new LinkedHashMap<>();
+        choice.put("index", 0);
+        choice.put("delta", delta);
+        choice.put("finish_reason", finishReason); // may be null
+
+        Map<String, Object> chunk = new LinkedHashMap<>();
+        chunk.put("id", id);
+        chunk.put("object", "chat.completion.chunk");
+        chunk.put("created", created);
+        chunk.put("model", model);
+        chunk.put("choices", List.of(choice));
         try {
-            // finish_reason is null on the content chunk, so build with a null-tolerant map (not Map.of).
-            Map<String, Object> firstChoice = new LinkedHashMap<>();
-            firstChoice.put("index", 0);
-            firstChoice.put("delta", Map.of("role", "assistant", "content", answer));
-            firstChoice.put("finish_reason", null);
-
-            Map<String, Object> chunk = new LinkedHashMap<>();
-            chunk.put("id", id);
-            chunk.put("object", "chat.completion.chunk");
-            chunk.put("created", created);
-            chunk.put("model", model);
-            chunk.put("choices", List.of(firstChoice));
-
-            Map<String, Object> done = new LinkedHashMap<>();
-            done.put("id", id);
-            done.put("object", "chat.completion.chunk");
-            done.put("created", created);
-            done.put("model", model);
-            done.put("choices", List.of(Map.of("index", 0, "delta", Map.of(), "finish_reason", "stop")));
-
-            return "data: " + json.writeValueAsString(chunk) + "\n\n"
-                    + "data: " + json.writeValueAsString(done) + "\n\n"
-                    + "data: [DONE]\n\n";
+            return json.writeValueAsString(chunk);
         } catch (Exception e) {
-            throw new RuntimeException("Failed to serialize SSE chunk", e);
+            throw new UncheckedIOException(new IOException("failed to serialize chunk", e));
+        }
+    }
+
+    private void writeEvent(OutputStream out, String jsonChunk) {
+        writeRaw(out, "data: " + jsonChunk + "\n\n");
+    }
+
+    private void writeRaw(OutputStream out, String s) {
+        try {
+            out.write(s.getBytes(StandardCharsets.UTF_8));
+            out.flush();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
         }
     }
 

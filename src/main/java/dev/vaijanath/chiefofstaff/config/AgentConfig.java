@@ -1,20 +1,27 @@
 package dev.vaijanath.chiefofstaff.config;
 
+import dev.langchain4j.model.ollama.OllamaChatModel;
+import dev.langchain4j.model.ollama.OllamaStreamingChatModel;
 import dev.vaijanath.aiagent.agent.Agent;
-import dev.vaijanath.aiagent.agent.DefaultAgent;
+import dev.vaijanath.aiagent.langchain4j.LangChain4jModelPort;
+import dev.vaijanath.aiagent.langchain4j.LangChain4jStreamingModelPort;
 import dev.vaijanath.aiagent.langchain4j.OllamaModelPorts;
+import dev.vaijanath.aiagent.agent.DefaultAgent;
 import dev.vaijanath.aiagent.model.ModelPort;
+import dev.vaijanath.aiagent.model.StreamingModelPort;
 import dev.vaijanath.aiagent.model.StructuredOutput;
 import dev.vaijanath.aiagent.rag.Embedder;
 import dev.vaijanath.aiagent.tool.Tool;
 import dev.vaijanath.aiagent.tool.ToolApprovers;
 import dev.vaijanath.aiagent.tools.annotations.ReflectiveTools;
+import dev.vaijanath.chiefofstaff.agent.GenerationAgent;
 import dev.vaijanath.chiefofstaff.agent.Handoff;
 import dev.vaijanath.chiefofstaff.agent.Supervisor;
 import dev.vaijanath.chiefofstaff.prompt.CosPrompts;
 import dev.vaijanath.chiefofstaff.rag.RagStore;
 import dev.vaijanath.chiefofstaff.rag.RagTools;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -22,20 +29,38 @@ import java.util.Map;
 import java.util.Set;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 /**
- * Wires the model, the RAG store, and the registry of agents exposed as OpenAI-style "models".
+ * Wires the models, the RAG store, and the registry of agents exposed as OpenAI-style "models".
  *
- * <p>The supervisor ({@code agent-chief-of-staff}) routes to bare-id specialists; each is also exposed
- * directly as {@code agent-<id>}. Tool-using specialists (researcher, notes) get RAG + MCP filesystem
- * tools; comms / code / handoff are tool-less. Add to the {@code specialists} map to grow the system.
+ * <p>Models are built directly (not via the {@code OllamaModelPorts.ollama} helper) so we can set
+ * {@code num_ctx} (256K) and never set {@code num_predict} — long outputs are bounded only by context.
+ * A streaming model backs token-by-token SSE for the tool-less agents.
  */
 @Configuration
 class AgentConfig {
 
     @Bean
+    @Primary // StreamingModelPort is also a ModelPort; prefer this one for plain ModelPort injection.
     ModelPort modelPort(CosProperties props) {
-        return OllamaModelPorts.ollama(props.ollamaBaseUrl(), props.model());
+        OllamaChatModel model = OllamaChatModel.builder()
+                .baseUrl(props.ollamaBaseUrl())
+                .modelName(props.model())
+                .numCtx(props.numCtx())
+                .timeout(Duration.ofMinutes(10))
+                .build();
+        return new LangChain4jModelPort(model, "ollama:" + props.model());
+    }
+
+    @Bean
+    StreamingModelPort streamingModelPort(CosProperties props) {
+        OllamaStreamingChatModel model = OllamaStreamingChatModel.builder()
+                .baseUrl(props.ollamaBaseUrl())
+                .modelName(props.model())
+                .numCtx(props.numCtx())
+                .build();
+        return new LangChain4jStreamingModelPort(model, "ollama-stream:" + props.model());
     }
 
     @Bean
@@ -46,16 +71,16 @@ class AgentConfig {
     }
 
     @Bean
-    Map<String, Agent> agents(ModelPort model, CosProperties props, RagStore rag, McpToolSource mcp) {
+    Map<String, Agent> agents(
+            ModelPort model, StreamingModelPort streamingModel, CosProperties props, RagStore rag, McpToolSource mcp) {
         List<Tool> ragTools = ReflectiveTools.from(new RagTools(rag));
         String dataDir = Path.of(props.dataDir()).toAbsolutePath().toString();
         String vaultDir = Path.of(props.dataDir(), "vault").toAbsolutePath().toString();
 
         Map<String, Agent> specialists = new LinkedHashMap<>();
-        specialists.put(
-                "comms", DefaultAgent.builder().model(model).systemPrompt(CosPrompts.comms()).build());
-        specialists.put(
-                "code", DefaultAgent.builder().model(model).systemPrompt(CosPrompts.code()).build());
+        // Tool-less generators — streamable (system prompt + user message → model).
+        specialists.put("comms", new GenerationAgent(CosPrompts.comms(), model, streamingModel));
+        specialists.put("code", new GenerationAgent(CosPrompts.code(), model, streamingModel));
         specialists.put("handoff", new Handoff(model));
 
         // Researcher: library RAG + filesystem read.
@@ -69,7 +94,7 @@ class AgentConfig {
                         mcp.select("list_directory", "read_text_file", "search_files", "directory_tree"))));
 
         StructuredOutput router = OllamaModelPorts.ollamaStructured(props.ollamaBaseUrl(), props.model());
-        Supervisor supervisor = new Supervisor(model, router, specialists);
+        Supervisor supervisor = new Supervisor(model, streamingModel, router, specialists);
 
         Map<String, Agent> registry = new LinkedHashMap<>();
         registry.put("agent-chief-of-staff", supervisor);
@@ -79,11 +104,7 @@ class AgentConfig {
 
     /**
      * A tool-using DefaultAgent with {@code allowAll} approval — matching the Python's no-auth tools.
-     * The RAG tools are READ_ONLY (would run under the default policy anyway), but MCP tools arrive
-     * EFFECTFUL, so without this they'd be denied.
-     *
-     * <p>ponytail: allowAll is dev-grade. Replace with a per-tool allow-list once an effectful tool
-     * (e.g. GitHub create_issue) is added, so writes require an explicit opt-in.
+     * ponytail: allowAll is dev-grade; replace with a per-tool allow-list when an effectful tool is added.
      */
     private static Agent toolAgent(ModelPort model, String systemPrompt, List<Tool> tools) {
         DefaultAgent.Builder builder = DefaultAgent.builder()

@@ -12,6 +12,7 @@ build/
 # OS / runtime
 .DS_Store
 *.log
+logs/
 var/
 data/
 .env

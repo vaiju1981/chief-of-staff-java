@@ -16,6 +16,7 @@ public record CosProperties(
         String dbUser,
         String dbPassword,
         int embeddingDimensions,
+        int numCtx,
         String dataDir,
         String githubToken,
         String tavilyApiKey) {
@@ -29,6 +30,9 @@ public record CosProperties(
         dbUser = blankTo(dbUser, "cos");
         dbPassword = blankTo(dbPassword, "cos_local_dev");
         embeddingDimensions = embeddingDimensions > 0 ? embeddingDimensions : 384;
+        // gemma context window. Large so long inputs + long outputs fit; note we never set num_predict,
+        // so output length is bounded only by this context and the model's stop.
+        numCtx = numCtx > 0 ? numCtx : 262144;
         dataDir = blankTo(dataDir, "data");
         githubToken = strip(githubToken);
         tavilyApiKey = strip(tavilyApiKey);
