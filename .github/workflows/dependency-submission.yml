@@ -1,0 +1,39 @@
+name: Dependency submission
+
+# Submits the Gradle dependency graph to GitHub so Dependabot can flag vulnerable (including
+# transitive) dependencies. Runs ONLY on push to the default branch: the graph is consumed from the
+# default branch alone, so running it on PRs adds no value.
+
+on:
+  push:
+    branches: [ main ]
+
+concurrency:
+  group: dependency-submission-${{ github.ref }}
+  cancel-in-progress: true
+
+# Submitting a dependency snapshot writes to the repository's dependency graph.
+permissions:
+  contents: write
+
+jobs:
+  submit:
+    name: Submit Gradle dependency graph
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 21 (matches the build baseline)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Submitting the resolved graph requires the repo's Dependency graph feature to be ENABLED:
+      #   Settings → Code security → Dependency graph → Enable.
+      # Until it is, the submit call is rejected ("Dependency graph is disabled"). continue-on-error
+      # keeps main green in the meantime — the build still validates that dependencies resolve, and
+      # Dependabot version updates work regardless. Remove it once the feature is enabled.
+      - name: Generate and submit dependency graph
+        uses: gradle/actions/dependency-submission@v6
+        continue-on-error: true
