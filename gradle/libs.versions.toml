@@ -5,7 +5,7 @@
 agent = "0.5.0"          # io.github.vaiju1981 java-ai-agent, on Maven Central
 springboot = "4.1.0"
 junit = "6.1.0"
-langchain4j = "1.16.3"             # core; must match agent-langchain4j's transitive version
+langchain4j = "1.17.1"             # core; must match agent-langchain4j's transitive version
 langchain4jMcp = "1.16.3-beta26"   # matches java-ai-agent's catalog (MCP stdio client)
 postgresql = "42.7.11"
 tika = "2.9.2"                     # document text extraction (PDF / DOCX / PPTX / HTML)
