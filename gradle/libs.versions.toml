@@ -5,7 +5,7 @@
 agent = "0.5.0"          # io.github.vaiju1981 java-ai-agent, on Maven Central
 springboot = "4.1.0"
 junit = "6.1.0"
-langchain4jMcp = "1.16.3-beta26"   # matches java-ai-agent's catalog (MCP stdio client)
+langchain4jMcp = "1.17.1-beta27"   # matches java-ai-agent's catalog (MCP stdio client)
 postgresql = "42.7.11"
 
 [libraries]
