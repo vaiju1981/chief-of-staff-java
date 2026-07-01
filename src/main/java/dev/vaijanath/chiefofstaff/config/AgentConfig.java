@@ -68,8 +68,8 @@ class AgentConfig {
     @Bean
     RagStore ragStore(CosProperties props) {
         Embedder embedder = OllamaModelPorts.ollamaEmbedder(props.ollamaBaseUrl(), props.embeddingModel());
-        return new RagStore(
-                props.dbUrl(), props.dbUser(), props.dbPassword(), embedder, props.embeddingDimensions());
+        return new RagStore(props.dbUrl(), props.dbUser(), props.dbPassword(), embedder,
+                props.embeddingDimensions(), props.minScore());
     }
 
     @Bean

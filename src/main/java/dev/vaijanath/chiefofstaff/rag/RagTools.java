@@ -17,6 +17,11 @@ public final class RagTools {
 
     private static final Set<String> CATEGORIES = Set.of("idn", "research", "personal", "admin", "inbox");
 
+    /** Grounding gate: what a tool returns when nothing clears the similarity floor. */
+    private static final String NOTHING = "NO MATCHING DOCUMENTS. This topic is not in the user's indexed "
+            + "documents. Tell the user you could not find it in their documents, and do NOT answer it from "
+            + "general knowledge.";
+
     private final RagStore rag;
 
     public RagTools(RagStore rag) {
@@ -55,8 +60,7 @@ public final class RagTools {
     public String searchMeetings(
             @ToolParam(description = "Keywords or a natural-language question") String query,
             @ToolParam(description = "Number of results (default 5)", required = false) Integer topK) {
-        List<RetrievedChunk> hits = rag.searchMeetings(query, topKOr(topK));
-        return hits.isEmpty() ? "No relevant meeting notes found." : format(hits);
+        return format(rag.searchMeetings(query, topKOr(topK)));
     }
 
     private static int topKOr(Integer topK) {
@@ -65,7 +69,7 @@ public final class RagTools {
 
     private static String format(List<RetrievedChunk> hits) {
         if (hits.isEmpty()) {
-            return "No relevant document found in the library.";
+            return NOTHING;
         }
         StringBuilder sb = new StringBuilder();
         int i = 1;

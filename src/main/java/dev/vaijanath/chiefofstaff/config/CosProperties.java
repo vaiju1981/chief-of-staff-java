@@ -17,6 +17,7 @@ public record CosProperties(
         String dbPassword,
         int embeddingDimensions,
         int numCtx,
+        double minScore,
         String dataDir,
         String githubToken,
         String tavilyApiKey) {
@@ -33,6 +34,8 @@ public record CosProperties(
         // gemma context window. Large so long inputs + long outputs fit; note we never set num_predict,
         // so output length is bounded only by this context and the model's stop.
         numCtx = numCtx > 0 ? numCtx : 262144;
+        // RAG grounding gate: drop retrieved chunks below this cosine similarity.
+        minScore = minScore > 0 ? minScore : 0.3;
         dataDir = blankTo(dataDir, "data");
         githubToken = strip(githubToken);
         tavilyApiKey = strip(tavilyApiKey);

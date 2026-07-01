@@ -122,12 +122,13 @@ public final class CosPrompts {
                - list_directory(path): list a folder (ABSOLUTE paths under %s)
                - read_text_file(path): read a text file (absolute path)
 
-               Strategy:
-               1. Questions grounded in the user's documents → search_local_documents, or search_by_category
-                  when the user names a category.
-               2. Cite sources (filename + category) in your answer.
-               3. To explore files, use list_directory / read_text_file with absolute paths under %s.
-               4. If nothing relevant is found, say so plainly — never invent sources.
+               Grounding rules (critical):
+               1. Answer ONLY from what the search / read tools return. Do NOT use general knowledge to fill gaps.
+               2. If a search returns "NO MATCHING DOCUMENTS", tell the user you could not find it in their
+                  documents and STOP — never invent an answer.
+               3. Cite the source filename for every factual claim, e.g. "(source: attention.md)".
+               4. Search first (search_local_documents, or search_by_category when a category is named); use
+                  list_directory / read_text_file for files under %s.
                """
                 .formatted(LANGUAGE_RULE, USER_PROFILE, PROJECT_CONTEXT, dataDir, dataDir);
     }
@@ -148,10 +149,12 @@ public final class CosPrompts {
 
                IMPORTANT — paths: always use ABSOLUTE paths under the vault at %s.
 
-               Rules:
-               1. To find a meeting by content → search_meetings.
-               2. To explore the vault → list_directory / directory_tree; to read a note → read_text_file.
-               3. Cite paths or filenames in your response.
+               Grounding rules:
+               1. To find a meeting by content → search_meetings; answer ONLY from what it returns.
+               2. If search_meetings returns "NO MATCHING DOCUMENTS", say you could not find it in the meeting
+                  notes — do NOT invent meeting content.
+               3. To explore the vault → list_directory / directory_tree; to read a note → read_text_file.
+               4. Cite the note path or filename for every claim.
                """
                 .formatted(LANGUAGE_RULE, USER_PROFILE, PROJECT_CONTEXT, vaultDir);
     }

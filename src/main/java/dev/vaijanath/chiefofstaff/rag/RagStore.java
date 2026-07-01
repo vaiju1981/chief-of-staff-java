@@ -13,14 +13,15 @@ import org.slf4j.LoggerFactory;
 
 /**
  * RAG store over pgvector, ported from the Python ingest.py + search.py. Everything lives under one
- * tenant with the category in chunk metadata; category and meeting filters are applied in-app (pgvector
- * ranks by cosine distance, no metadata filter in SQL).
+ * tenant with the category in chunk metadata; category and meeting filters are applied in-app.
  *
- * <p>Degrades gracefully: if Postgres is unreachable at startup, the store is <b>disabled</b> — the app
- * still boots and researcher / notes keep their filesystem tools; RAG search just reports unavailable.
+ * <p><b>Grounding gate:</b> pgvector always returns its top-k, even when every match is weak — which lets
+ * an agent dress up an irrelevant chunk as "grounding". So results below {@code minScore} cosine
+ * similarity are dropped; when nothing clears the bar the search returns empty, and the agent is told
+ * (imperatively, in {@link RagTools}) to say it isn't in the user's documents rather than invent an answer.
  *
- * <p>ponytail: plain char-window chunking and text/markdown ingestion only. PDF/DOCX via Apache Tika is
- * a follow-up (the {@code extractText} seam is where it plugs in).
+ * <p>Degrades gracefully: if Postgres is unreachable at startup the store is disabled and RAG search
+ * reports unavailable, but the app still boots.
  */
 public final class RagStore {
 
@@ -31,14 +32,17 @@ public final class RagStore {
 
     private final PgVectorRetriever store; // null when unavailable
     private final boolean enabled;
+    private final double minScore;
 
-    public RagStore(String dbUrl, String dbUser, String dbPassword, Embedder embedder, int dimensions) {
+    public RagStore(
+            String dbUrl, String dbUser, String dbPassword, Embedder embedder, int dimensions, double minScore) {
+        this.minScore = minScore;
         PgVectorRetriever s = null;
         try {
             ConnectionSource connections = () -> DriverManager.getConnection(dbUrl, dbUser, dbPassword);
             s = new PgVectorRetriever(connections, embedder, dimensions);
             s.ensureSchema();
-            log.info("[rag] pgvector store ready ({} dims)", dimensions);
+            log.info("[rag] pgvector store ready ({} dims, min-score {})", dimensions, minScore);
         } catch (Exception e) {
             log.warn("[rag] pgvector unavailable ({}). RAG search disabled; researcher/notes still run "
                     + "with filesystem tools.", e.toString());
@@ -65,27 +69,31 @@ public final class RagStore {
     }
 
     public List<RetrievedChunk> search(String query, int topK) {
-        return enabled ? store.retrieve(TENANT, query, topK) : List.of();
+        return relevant(query, topK * 2).stream().limit(topK).toList();
     }
 
     public List<RetrievedChunk> searchByCategory(String query, String category, int topK) {
-        if (!enabled) {
-            return List.of();
-        }
-        return store.retrieve(TENANT, query, topK * 4).stream()
+        return relevant(query, topK * 4).stream()
                 .filter(c -> category.equals(c.metadata().get("category")))
                 .limit(topK)
                 .toList();
     }
 
     public List<RetrievedChunk> searchMeetings(String query, int topK) {
-        if (!enabled) {
-            return List.of();
-        }
-        return store.retrieve(TENANT, query, topK * 4).stream()
+        return relevant(query, topK * 4).stream()
                 .filter(c -> "meeting".equals(c.metadata().get("type"))
                         || c.id().toLowerCase().contains("meeting"))
                 .limit(topK)
+                .toList();
+    }
+
+    /** Retrieve, then keep only chunks at or above the similarity floor (the grounding gate). */
+    private List<RetrievedChunk> relevant(String query, int limit) {
+        if (!enabled) {
+            return List.of();
+        }
+        return store.retrieve(TENANT, query, limit).stream()
+                .filter(c -> c.score() >= minScore)
                 .toList();
     }
 
