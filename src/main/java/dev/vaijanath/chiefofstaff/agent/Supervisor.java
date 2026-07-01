@@ -1,7 +1,5 @@
 package dev.vaijanath.chiefofstaff.agent;
 
-import dev.vaijanath.aiagent.agent.Agent;
-import dev.vaijanath.aiagent.agent.AgentRequest;
 import dev.vaijanath.aiagent.agent.AgentResponse;
 import dev.vaijanath.aiagent.model.Message;
 import dev.vaijanath.aiagent.model.ModelPort;
@@ -18,14 +16,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Orchestrator, ported from {@code supervisor.py}: routes each request to exactly one specialist, or
- * answers meta / meta_recording questions itself by reformulating fixed facts into the user's language.
- *
- * <p>Routing prefers typed {@link StructuredOutput} (no fragile parsing), then falls back to a
- * single-token chat classification, then to {@code meta}. Streaming ({@link Streamable}) streams the
- * meta answers and any streamable specialist; tool agents fall back to a single final chunk.
+ * Orchestrator, ported from {@code supervisor.py}: routes each turn to exactly one specialist (on the
+ * latest user message), or answers meta / meta_recording itself by reformulating fixed facts into the
+ * user's language. Delegated specialists receive the full conversation, so multi-turn context flows
+ * through. Routing prefers typed {@link StructuredOutput}, then a single-token chat, then {@code meta}.
  */
-public final class Supervisor implements Agent, Streamable {
+public final class Supervisor implements ChatAgent {
 
     private static final Logger log = LoggerFactory.getLogger(Supervisor.class);
 
@@ -38,13 +34,13 @@ public final class Supervisor implements Agent, Streamable {
     private final ModelPort model;
     private final StreamingModelPort streamingModel;
     private final StructuredOutput router;
-    private final Map<String, Agent> specialists;
+    private final Map<String, ChatAgent> specialists;
 
     public Supervisor(
             ModelPort model,
             StreamingModelPort streamingModel,
             StructuredOutput router,
-            Map<String, Agent> specialists) {
+            Map<String, ChatAgent> specialists) {
         this.model = model;
         this.streamingModel = streamingModel;
         this.router = router;
@@ -55,52 +51,44 @@ public final class Supervisor implements Agent, Streamable {
     public record Route(String agent) {}
 
     @Override
-    public AgentResponse run(AgentRequest request) {
-        String message = clean(request);
-        if (isAutoRequest(message)) {
+    public AgentResponse respond(List<Message> conversation) {
+        String latest = Conversations.latestUser(conversation);
+        if (isAutoRequest(latest)) {
             return AgentResponse.completed("[]");
         }
-        String route = route(message);
+        String route = route(latest);
         log.info("[supervisor] route -> {}", route);
         return switch (route) {
-            case "meta" -> AgentResponse.completed(
-                    reformulate(SupervisorPrompts.SYSTEM_FACTS, META_GUIDANCE, message));
+            case "meta" -> AgentResponse.completed(reformulate(SupervisorPrompts.SYSTEM_FACTS, META_GUIDANCE, latest));
             case "meta_recording" -> AgentResponse.completed(
-                    reformulate(SupervisorPrompts.MEETING_FACTS, MEETING_GUIDANCE, message));
+                    reformulate(SupervisorPrompts.MEETING_FACTS, MEETING_GUIDANCE, latest));
             default -> {
-                Agent specialist = specialists.get(route);
+                ChatAgent specialist = specialists.get(route);
                 yield specialist != null
-                        ? specialist.run(request)
-                        : AgentResponse.completed(reformulate(SupervisorPrompts.SYSTEM_FACTS, META_GUIDANCE, message));
+                        ? specialist.respond(conversation)
+                        : AgentResponse.completed(reformulate(SupervisorPrompts.SYSTEM_FACTS, META_GUIDANCE, latest));
             }
         };
     }
 
     @Override
-    public AgentResponse runStreaming(AgentRequest request, Consumer<String> onToken) {
-        String message = clean(request);
-        if (isAutoRequest(message)) {
+    public AgentResponse respondStreaming(List<Message> conversation, Consumer<String> onToken) {
+        String latest = Conversations.latestUser(conversation);
+        if (isAutoRequest(latest)) {
             onToken.accept("[]");
             return AgentResponse.completed("[]");
         }
-        String route = route(message);
+        String route = route(latest);
         log.info("[supervisor] route -> {} (streaming)", route);
         return switch (route) {
-            case "meta" -> streamReformulation(SupervisorPrompts.SYSTEM_FACTS, META_GUIDANCE, message, onToken);
+            case "meta" -> streamReformulation(SupervisorPrompts.SYSTEM_FACTS, META_GUIDANCE, latest, onToken);
             case "meta_recording" -> streamReformulation(
-                    SupervisorPrompts.MEETING_FACTS, MEETING_GUIDANCE, message, onToken);
+                    SupervisorPrompts.MEETING_FACTS, MEETING_GUIDANCE, latest, onToken);
             default -> {
-                Agent specialist = specialists.get(route);
-                if (specialist instanceof Streamable streamable) {
-                    yield streamable.runStreaming(request, onToken);
-                }
-                if (specialist != null) {
-                    // Tool agents (researcher / notes) + handoff aren't streamable → run, emit once.
-                    AgentResponse response = specialist.run(request);
-                    onToken.accept(response.output());
-                    yield response;
-                }
-                yield streamReformulation(SupervisorPrompts.SYSTEM_FACTS, META_GUIDANCE, message, onToken);
+                ChatAgent specialist = specialists.get(route);
+                yield specialist != null
+                        ? specialist.respondStreaming(conversation, onToken)
+                        : streamReformulation(SupervisorPrompts.SYSTEM_FACTS, META_GUIDANCE, latest, onToken);
             }
         };
     }
@@ -168,10 +156,6 @@ public final class Supervisor implements Agent, Streamable {
                 Message.user(userMessage)));
     }
 
-    private static String clean(AgentRequest request) {
-        return request.input() == null ? "" : request.input().strip();
-    }
-
     /** Lowercase and strip everything but a–z and underscore (so {@code meta_recording} survives). */
     private static String normalize(String s) {
         return s == null ? "" : s.strip().toLowerCase().replaceAll("[^a-z_]", "");
@@ -179,7 +163,7 @@ public final class Supervisor implements Agent, Streamable {
 
     /** Open WebUI fires auto-generated title/tag/follow-up requests that look like JSON; skip them. */
     private static boolean isAutoRequest(String message) {
-        if (!message.startsWith("{")) {
+        if (message == null || !message.startsWith("{")) {
             return false;
         }
         String head = message.substring(0, Math.min(message.length(), 200));

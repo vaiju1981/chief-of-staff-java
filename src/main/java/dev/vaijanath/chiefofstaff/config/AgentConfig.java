@@ -14,9 +14,11 @@ import dev.vaijanath.aiagent.rag.Embedder;
 import dev.vaijanath.aiagent.tool.Tool;
 import dev.vaijanath.aiagent.tool.ToolApprovers;
 import dev.vaijanath.aiagent.tools.annotations.ReflectiveTools;
+import dev.vaijanath.chiefofstaff.agent.ChatAgent;
 import dev.vaijanath.chiefofstaff.agent.GenerationAgent;
 import dev.vaijanath.chiefofstaff.agent.Handoff;
 import dev.vaijanath.chiefofstaff.agent.Supervisor;
+import dev.vaijanath.chiefofstaff.agent.ToolChatAgent;
 import dev.vaijanath.chiefofstaff.prompt.CosPrompts;
 import dev.vaijanath.chiefofstaff.rag.RagStore;
 import dev.vaijanath.chiefofstaff.rag.RagTools;
@@ -71,32 +73,31 @@ class AgentConfig {
     }
 
     @Bean
-    Map<String, Agent> agents(
+    Map<String, ChatAgent> agents(
             ModelPort model, StreamingModelPort streamingModel, CosProperties props, RagStore rag, McpToolSource mcp) {
         List<Tool> ragTools = ReflectiveTools.from(new RagTools(rag));
         String dataDir = Path.of(props.dataDir()).toAbsolutePath().toString();
         String vaultDir = Path.of(props.dataDir(), "vault").toAbsolutePath().toString();
 
-        Map<String, Agent> specialists = new LinkedHashMap<>();
-        // Tool-less generators — streamable (system prompt + user message → model).
+        Map<String, ChatAgent> specialists = new LinkedHashMap<>();
+        // Tool-less generators — real multi-turn + streaming (system prompt + conversation → model).
         specialists.put("comms", new GenerationAgent(CosPrompts.comms(), model, streamingModel));
         specialists.put("code", new GenerationAgent(CosPrompts.code(), model, streamingModel));
-        specialists.put("handoff", new Handoff(model));
+        specialists.put("handoff", new ToolChatAgent(new Handoff(model)));
 
-        // Researcher: library RAG + filesystem read.
-        specialists.put("researcher", toolAgent(model, CosPrompts.researcher(dataDir),
+        // Researcher: library RAG + filesystem read. Notes: meeting RAG + vault exploration.
+        // Tool agents flatten the conversation into their input (the streaming port is text-only).
+        specialists.put("researcher", new ToolChatAgent(toolAgent(model, CosPrompts.researcher(dataDir),
                 concat(only(ragTools, "search_local_documents", "search_by_category"),
-                        mcp.select("list_directory", "read_text_file"))));
-
-        // Notes: meeting RAG + filesystem exploration of the vault.
-        specialists.put("notes", toolAgent(model, CosPrompts.notes(vaultDir),
+                        mcp.select("list_directory", "read_text_file")))));
+        specialists.put("notes", new ToolChatAgent(toolAgent(model, CosPrompts.notes(vaultDir),
                 concat(only(ragTools, "search_meetings"),
-                        mcp.select("list_directory", "read_text_file", "search_files", "directory_tree"))));
+                        mcp.select("list_directory", "read_text_file", "search_files", "directory_tree")))));
 
         StructuredOutput router = OllamaModelPorts.ollamaStructured(props.ollamaBaseUrl(), props.model());
         Supervisor supervisor = new Supervisor(model, streamingModel, router, specialists);
 
-        Map<String, Agent> registry = new LinkedHashMap<>();
+        Map<String, ChatAgent> registry = new LinkedHashMap<>();
         registry.put("agent-chief-of-staff", supervisor);
         specialists.forEach((id, agent) -> registry.put("agent-" + id, agent));
         return registry;
