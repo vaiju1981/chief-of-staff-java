@@ -19,6 +19,7 @@ import dev.vaijanath.chiefofstaff.agent.GenerationAgent;
 import dev.vaijanath.chiefofstaff.agent.Handoff;
 import dev.vaijanath.chiefofstaff.agent.Supervisor;
 import dev.vaijanath.chiefofstaff.agent.ToolChatAgent;
+import dev.vaijanath.chiefofstaff.meeting.MeetingTools;
 import dev.vaijanath.chiefofstaff.prompt.CosPrompts;
 import dev.vaijanath.chiefofstaff.rag.RagStore;
 import dev.vaijanath.chiefofstaff.rag.RagTools;
@@ -74,7 +75,8 @@ class AgentConfig {
 
     @Bean
     Map<String, ChatAgent> agents(
-            ModelPort model, StreamingModelPort streamingModel, CosProperties props, RagStore rag, McpToolSource mcp) {
+            ModelPort model, StreamingModelPort streamingModel, CosProperties props, RagStore rag,
+            McpToolSource mcp, MeetingTools meetingTools) {
         List<Tool> ragTools = ReflectiveTools.from(new RagTools(rag));
         String dataDir = Path.of(props.dataDir()).toAbsolutePath().toString();
         String vaultDir = Path.of(props.dataDir(), "vault").toAbsolutePath().toString();
@@ -99,6 +101,10 @@ class AgentConfig {
         specialists.put("notes", new ToolChatAgent(toolAgent(model, CosPrompts.notes(vaultDir),
                 concat(only(ragTools, "search_meetings"),
                         mcp.select("list_directory", "read_text_file", "search_files", "directory_tree")))));
+
+        // Meeting: pilot the recorder from chat (start / stop / status).
+        specialists.put("meeting", new ToolChatAgent(
+                toolAgent(model, CosPrompts.meeting(), ReflectiveTools.from(meetingTools))));
 
         StructuredOutput router = OllamaModelPorts.ollamaStructured(props.ollamaBaseUrl(), props.model());
         Supervisor supervisor = new Supervisor(model, streamingModel, router, specialists);

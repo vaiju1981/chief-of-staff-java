@@ -20,7 +20,10 @@ public record CosProperties(
         double minScore,
         String dataDir,
         String githubToken,
-        String tavilyApiKey) {
+        String tavilyApiKey,
+        String whisperCli,
+        String whisperModel,
+        String whisperLanguage) {
 
     public CosProperties {
         ollamaBaseUrl = blankTo(ollamaBaseUrl, "http://localhost:11434");
@@ -39,6 +42,9 @@ public record CosProperties(
         dataDir = blankTo(dataDir, "data");
         githubToken = strip(githubToken);
         tavilyApiKey = strip(tavilyApiKey);
+        whisperCli = blankTo(whisperCli, "whisper-cli");
+        whisperModel = blankTo(whisperModel, "models/whisper/ggml-base.bin");
+        whisperLanguage = blankTo(whisperLanguage, "auto");
     }
 
     public boolean hasGuardModel() {

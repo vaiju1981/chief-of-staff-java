@@ -35,3 +35,7 @@ cos:
   # MCP tokens (blank disables that server). start.sh sources these from .env.
   github-token: ${GITHUB_TOKEN:}
   tavily-api-key: ${TAVILY_API_KEY:}
+  # Meeting pipeline: whisper.cpp CLI + model, and transcription language ('auto' detects).
+  whisper-cli: ${COS_WHISPER_CLI:whisper-cli}
+  whisper-model: ${COS_WHISPER_MODEL:models/whisper/ggml-base.bin}
+  whisper-language: ${COS_WHISPER_LANGUAGE:auto}
