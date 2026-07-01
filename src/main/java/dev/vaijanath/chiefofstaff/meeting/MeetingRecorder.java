@@ -18,17 +18,17 @@ import org.springframework.stereotype.Component;
 
 /**
  * Captures a meeting from the microphone (your voice) + BlackHole (the other participants' audio),
- * mixes them into one mono WAV, and on stop triggers {@link MeetingProcess}. Ported from recorder.py.
+ * downmixes each to mono, mixes them, and writes one 48 kHz mono WAV; on stop it downsamples to whisper's
+ * 16 kHz via {@code afconvert} and triggers {@link MeetingProcess}. Ported from recorder.py.
  *
- * <p>Captures at 48 kHz mono (widely supported), then downsamples to whisper's 16 kHz via {@code
- * afconvert} (built into macOS) — avoiding in-JVM resampling. Live capture needs BlackHole installed;
- * if a device is missing the recorder uses whichever is available.
+ * <p>Each device is opened mono if it supports it, else stereo (BlackHole 2ch is stereo) and downmixed.
+ * Live capture needs BlackHole installed; a missing device is skipped and the other is used alone.
  */
 @Component
 public class MeetingRecorder {
 
     private static final Logger log = LoggerFactory.getLogger(MeetingRecorder.class);
-    private static final AudioFormat FORMAT = new AudioFormat(48_000f, 16, 1, true, false); // 48k mono 16-bit LE
+    private static final float RATE = 48_000f;
     private static final int CHUNK = 8192;
 
     private final MeetingProcess process;
@@ -46,12 +46,15 @@ public class MeetingRecorder {
         this.props = props;
     }
 
+    /** A capture line plus its channel count (1 = mono, 2 = stereo → downmixed on read). */
+    private record Source(TargetDataLine line, int channels) {}
+
     public synchronized String start(String project, String topic) {
         if (recording) {
             return "⚠️  A recording is already in progress (project " + this.project + "). Stop it first.";
         }
-        TargetDataLine mic = openLine("mic", null);
-        TargetDataLine blackhole = openLine("blackhole", "BlackHole");
+        Source mic = openLine("mic", null);
+        Source blackhole = openLine("blackhole", "BlackHole");
         if (mic == null && blackhole == null) {
             return "❌ No audio input available. Install BlackHole (brew install blackhole-2ch) and set the "
                     + "Multi-Output Device, then try again.";
@@ -108,48 +111,53 @@ public class MeetingRecorder {
                 : "ℹ️  No active recording.";
     }
 
-    /** Opens a 48k-mono capture line; by device-name substring, or the default input when name is null. */
-    private TargetDataLine openLine(String label, String nameContains) {
-        try {
-            DataLine.Info info = new DataLine.Info(TargetDataLine.class, FORMAT);
-            Mixer.Info chosen = null;
+    /** Opens a 48k capture line (mono if supported, else stereo); by device-name substring, or default. */
+    private Source openLine(String label, String nameContains) {
+        Mixer.Info target = null;
+        if (nameContains != null) {
             for (Mixer.Info mixerInfo : AudioSystem.getMixerInfo()) {
-                if (!AudioSystem.getMixer(mixerInfo).isLineSupported(info)) {
+                // "Port <name>" mixers are control ports, not capture devices — skip them.
+                if (mixerInfo.getName().startsWith("Port ")) {
                     continue;
                 }
-                if (nameContains == null) {
-                    chosen = mixerInfo;
-                    break;
-                }
                 if (mixerInfo.getName().toLowerCase().contains(nameContains.toLowerCase())) {
-                    chosen = mixerInfo;
+                    target = mixerInfo;
                     break;
                 }
             }
-            if (nameContains != null && chosen == null) {
+            if (target == null) {
                 log.info("[meeting] {} device not found (skipping)", label);
                 return null;
             }
-            TargetDataLine line = (TargetDataLine)
-                    (chosen != null ? AudioSystem.getMixer(chosen).getLine(info) : AudioSystem.getLine(info));
-            line.open(FORMAT);
-            line.start();
-            log.info("[meeting] capturing {} from '{}'", label, chosen != null ? chosen.getName() : "default");
-            return line;
-        } catch (Exception e) {
-            log.warn("[meeting] could not open {} line: {}", label, e.toString());
-            return null;
         }
+        // Prefer stereo (BlackHole's concrete format; downmixed on read), fall back to mono (the mic).
+        for (int channels : new int[] {2, 1}) {
+            AudioFormat format = new AudioFormat(RATE, 16, channels, true, false);
+            DataLine.Info info = new DataLine.Info(TargetDataLine.class, format);
+            try {
+                TargetDataLine line = (TargetDataLine)
+                        (target != null ? AudioSystem.getMixer(target).getLine(info) : AudioSystem.getLine(info));
+                line.open(format);
+                line.start();
+                log.info("[meeting] capturing {} from '{}' ({}ch)", label,
+                        target != null ? target.getName() : "default input", channels);
+                return new Source(line, channels);
+            } catch (Exception e) {
+                // format unsupported at this channel count — try the next
+            }
+        }
+        log.warn("[meeting] no supported capture format for {}", label);
+        return null;
     }
 
-    private void capture(TargetDataLine mic, TargetDataLine blackhole, Path out) {
+    private void capture(Source mic, Source blackhole, Path out) {
         try (WavWriter writer = new WavWriter(out)) {
             byte[] micBuf = new byte[CHUNK];
             byte[] bhBuf = new byte[CHUNK];
             while (recording) {
-                int nm = mic != null ? mic.read(micBuf, 0, CHUNK) : 0;
-                int nb = blackhole != null ? blackhole.read(bhBuf, 0, CHUNK) : 0;
-                writer.write(mix(mic != null ? micBuf : null, nm, blackhole != null ? bhBuf : null, nb));
+                short[] m = readMono(mic, micBuf);
+                short[] b = readMono(blackhole, bhBuf);
+                writer.write(toBytes(mix(m, b)));
             }
         } catch (Exception e) {
             log.warn("[meeting] capture error: {}", e.toString());
@@ -159,22 +167,52 @@ public class MeetingRecorder {
         }
     }
 
-    /** Averages two 16-bit LE mono buffers; when only one is present, returns it as-is. */
-    private static byte[] mix(byte[] a, int na, byte[] b, int nb) {
-        if (b == null || nb == 0) {
-            return a == null ? new byte[0] : java.util.Arrays.copyOf(a, na);
+    /** Reads one chunk and returns mono 16-bit samples (downmixing L+R when the source is stereo). */
+    private static short[] readMono(Source source, byte[] buf) {
+        if (source == null) {
+            return new short[0];
         }
-        if (a == null || na == 0) {
-            return java.util.Arrays.copyOf(b, nb);
+        int n = source.line().read(buf, 0, buf.length);
+        if (n <= 0) {
+            return new short[0];
         }
-        int n = Math.min(na, nb);
-        byte[] out = new byte[n];
-        for (int i = 0; i + 1 < n; i += 2) {
-            short sa = (short) ((a[i] & 0xff) | (a[i + 1] << 8));
-            short sb = (short) ((b[i] & 0xff) | (b[i + 1] << 8));
-            int mixed = (sa + sb) / 2;
-            out[i] = (byte) (mixed & 0xff);
-            out[i + 1] = (byte) ((mixed >> 8) & 0xff);
+        if (source.channels() == 1) {
+            short[] out = new short[n / 2];
+            for (int i = 0; i < out.length; i++) {
+                out[i] = (short) ((buf[2 * i] & 0xff) | (buf[2 * i + 1] << 8));
+            }
+            return out;
+        }
+        int frames = n / 4;
+        short[] out = new short[frames];
+        for (int i = 0; i < frames; i++) {
+            short left = (short) ((buf[4 * i] & 0xff) | (buf[4 * i + 1] << 8));
+            short right = (short) ((buf[4 * i + 2] & 0xff) | (buf[4 * i + 3] << 8));
+            out[i] = (short) ((left + right) / 2);
+        }
+        return out;
+    }
+
+    private static short[] mix(short[] a, short[] b) {
+        if (b.length == 0) {
+            return a;
+        }
+        if (a.length == 0) {
+            return b;
+        }
+        int n = Math.min(a.length, b.length);
+        short[] out = new short[n];
+        for (int i = 0; i < n; i++) {
+            out[i] = (short) ((a[i] + b[i]) / 2);
+        }
+        return out;
+    }
+
+    private static byte[] toBytes(short[] samples) {
+        byte[] out = new byte[samples.length * 2];
+        for (int i = 0; i < samples.length; i++) {
+            out[2 * i] = (byte) (samples[i] & 0xff);
+            out[2 * i + 1] = (byte) ((samples[i] >> 8) & 0xff);
         }
         return out;
     }
@@ -206,10 +244,10 @@ public class MeetingRecorder {
         }
     }
 
-    private static void close(TargetDataLine line) {
-        if (line != null) {
-            line.stop();
-            line.close();
+    private static void close(Source source) {
+        if (source != null) {
+            source.line().stop();
+            source.line().close();
         }
     }
 
@@ -217,7 +255,7 @@ public class MeetingRecorder {
         return s == null || s.isBlank() ? "meeting" : s.replaceAll("[^a-zA-Z0-9_-]", "-");
     }
 
-    /** Minimal streaming WAV writer (16-bit PCM); patches the RIFF sizes on close. */
+    /** Minimal streaming WAV writer (48 kHz mono 16-bit PCM); patches the RIFF sizes on close. */
     private static final class WavWriter implements AutoCloseable {
         private final RandomAccessFile file;
         private int dataBytes;
@@ -239,7 +277,6 @@ public class MeetingRecorder {
             int sampleRate = 48_000;
             int channels = 1;
             int bits = 16;
-            int byteRate = sampleRate * channels * bits / 8;
             file.seek(0);
             file.writeBytes("RIFF");
             writeIntLE(36 + dataBytes);
@@ -249,7 +286,7 @@ public class MeetingRecorder {
             writeShortLE(1); // PCM
             writeShortLE(channels);
             writeIntLE(sampleRate);
-            writeIntLE(byteRate);
+            writeIntLE(sampleRate * channels * bits / 8);
             writeShortLE(channels * bits / 8);
             writeShortLE(bits);
             file.writeBytes("data");
