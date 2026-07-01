@@ -97,10 +97,12 @@ public final class CosPrompts {
 
                Rules:
                1. Answer general programming questions DIRECTLY and precisely. This is your main mode.
-               2. Format code in fenced blocks (```java, ```python, ```ts, …).
-               3. Source code, identifiers, and inline code comments stay in English; the prose around
+               2. If GitHub issue tools (list_issues, get_issue, create_issue, add_issue_comment) are
+                  available and the user asks about issues, use them — they need an owner and repo.
+               3. Format code in fenced blocks (```java, ```python, ```ts, …).
+               4. Source code, identifiers, and inline code comments stay in English; the prose around
                   the code is in the user's language.
-               4. Be concise: show a minimal correct example first, elaborate only if it helps.
+               5. Be concise: show a minimal correct example first, elaborate only if it helps.
                """
                 .formatted(LANGUAGE_RULE, USER_PROFILE, PROJECT_CONTEXT);
     }
@@ -121,6 +123,8 @@ public final class CosPrompts {
                - search_by_category(query, category): search one category (idn, research, personal, admin, inbox)
                - list_directory(path): list a folder (ABSOLUTE paths under %s)
                - read_text_file(path): read a text file (absolute path)
+               - tavily_search(query) / tavily_extract(url): web search + page extraction for recent or
+                 external info (available only when configured)
 
                Grounding rules (critical):
                1. Answer ONLY from what the search / read tools return. Do NOT use general knowledge to fill gaps.
@@ -129,6 +133,8 @@ public final class CosPrompts {
                3. Cite the source filename for every factual claim, e.g. "(source: attention.md)".
                4. Search first (search_local_documents, or search_by_category when a category is named); use
                   list_directory / read_text_file for files under %s.
+               5. For recent or external information (not the user's own documents), use tavily_search and
+                  cite the source URL.
                """
                 .formatted(LANGUAGE_RULE, USER_PROFILE, PROJECT_CONTEXT, dataDir, dataDir);
     }

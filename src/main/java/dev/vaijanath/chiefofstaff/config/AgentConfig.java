@@ -80,16 +80,22 @@ class AgentConfig {
         String vaultDir = Path.of(props.dataDir(), "vault").toAbsolutePath().toString();
 
         Map<String, ChatAgent> specialists = new LinkedHashMap<>();
-        // Tool-less generators — real multi-turn + streaming (system prompt + conversation → model).
         specialists.put("comms", new GenerationAgent(CosPrompts.comms(), model, streamingModel));
-        specialists.put("code", new GenerationAgent(CosPrompts.code(), model, streamingModel));
+
+        // Code: general Q&A (streaming) unless GitHub issue tools are available (GITHUB_TOKEN set), in
+        // which case it becomes a tool agent that can also manage issues.
+        List<Tool> githubTools = mcp.select("create_issue", "add_issue_comment", "get_issue", "list_issues");
+        specialists.put("code", githubTools.isEmpty()
+                ? new GenerationAgent(CosPrompts.code(), model, streamingModel)
+                : new ToolChatAgent(toolAgent(model, CosPrompts.code(), githubTools)));
+
         specialists.put("handoff", new ToolChatAgent(new Handoff(model)));
 
-        // Researcher: library RAG + filesystem read. Notes: meeting RAG + vault exploration.
-        // Tool agents flatten the conversation into their input (the streaming port is text-only).
+        // Researcher: library RAG + filesystem read + web (Tavily, when TAVILY_API_KEY is set).
+        // Notes: meeting RAG + vault exploration. Tool agents flatten the conversation into their input.
         specialists.put("researcher", new ToolChatAgent(toolAgent(model, CosPrompts.researcher(dataDir),
                 concat(only(ragTools, "search_local_documents", "search_by_category"),
-                        mcp.select("list_directory", "read_text_file")))));
+                        mcp.select("list_directory", "read_text_file", "tavily_search", "tavily_extract")))));
         specialists.put("notes", new ToolChatAgent(toolAgent(model, CosPrompts.notes(vaultDir),
                 concat(only(ragTools, "search_meetings"),
                         mcp.select("list_directory", "read_text_file", "search_files", "directory_tree")))));
@@ -104,14 +110,15 @@ class AgentConfig {
     }
 
     /**
-     * A tool-using DefaultAgent with {@code allowAll} approval — matching the Python's no-auth tools.
-     * ponytail: allowAll is dev-grade; replace with a per-tool allow-list when an effectful tool is added.
+     * A tool-using DefaultAgent whose approver is a per-tool allow-list of exactly the tools it was
+     * given — so the model can only invoke those (a hallucinated or injected tool name is denied),
+     * while the intended tools (including effectful ones like create_issue) run.
      */
     private static Agent toolAgent(ModelPort model, String systemPrompt, List<Tool> tools) {
         DefaultAgent.Builder builder = DefaultAgent.builder()
                 .model(model)
                 .systemPrompt(systemPrompt)
-                .toolApprover(ToolApprovers.allowAll());
+                .toolApprover(ToolApprovers.allowList(tools.stream().map(Tool::name).toArray(String[]::new)));
         tools.forEach(builder::tool);
         return builder.build();
     }

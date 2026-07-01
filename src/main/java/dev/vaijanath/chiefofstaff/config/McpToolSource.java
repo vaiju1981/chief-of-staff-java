@@ -43,22 +43,24 @@ class McpToolSource implements AutoCloseable {
             log.warn("[mcp] could not create data dir {}: {}", dataDir, e.toString());
         }
         addServer("filesystem",
-                List.of("npx", "-y", "@modelcontextprotocol/server-filesystem", dataDir.toString()));
-
-        // Deferred until tokens exist + the env-passing API is verified:
-        //   github: npx -y @modelcontextprotocol/server-github   (env GITHUB_PERSONAL_ACCESS_TOKEN)
-        //   tavily: npx -y tavily-mcp@latest                      (env TAVILY_API_KEY)
-        if (props.hasGithubToken() || props.hasTavily()) {
-            log.info("[mcp] github/tavily tokens present but their servers are not wired yet (next step)");
+                List.of("npx", "-y", "@modelcontextprotocol/server-filesystem", dataDir.toString()), Map.of());
+        if (props.hasGithubToken()) {
+            addServer("github", List.of("npx", "-y", "@modelcontextprotocol/server-github"),
+                    Map.of("GITHUB_PERSONAL_ACCESS_TOKEN", props.githubToken()));
+        }
+        if (props.hasTavily()) {
+            addServer("tavily", List.of("npx", "-y", "tavily-mcp@latest"),
+                    Map.of("TAVILY_API_KEY", props.tavilyApiKey()));
         }
     }
 
-    private void addServer(String name, List<String> command) {
+    private void addServer(String name, List<String> command, Map<String, String> env) {
         try {
-            McpTransport transport = new StdioMcpTransport.Builder()
-                    .command(command)
-                    .logEvents(false)
-                    .build();
+            StdioMcpTransport.Builder builder = new StdioMcpTransport.Builder().command(command).logEvents(false);
+            if (!env.isEmpty()) {
+                builder.environment(env);
+            }
+            McpTransport transport = builder.build();
             McpClient client = new DefaultMcpClient.Builder()
                     .transport(transport)
                     .key(name)
