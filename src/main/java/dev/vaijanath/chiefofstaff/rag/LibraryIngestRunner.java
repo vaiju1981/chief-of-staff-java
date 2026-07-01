@@ -45,7 +45,7 @@ class LibraryIngestRunner implements ApplicationRunner {
             }
             try (Stream<Path> files = Files.list(dir)) {
                 total += files.filter(Files::isRegularFile)
-                        .filter(LibraryIngestRunner::isText)
+                        .filter(TextExtraction::supported)
                         .mapToInt(file -> ingest(file, category))
                         .sum();
             } catch (IOException e) {
@@ -59,17 +59,13 @@ class LibraryIngestRunner implements ApplicationRunner {
 
     private int ingest(Path file, String category) {
         try {
-            int chunks = rag.ingest(category, file.getFileName().toString(), "text", Files.readString(file));
+            String type = TextExtraction.ext(file).replaceFirst("^\\.", "");
+            int chunks = rag.ingest(category, file.getFileName().toString(), type, TextExtraction.extract(file));
             log.info("[ingest] {} ({}) -> {} chunks", file.getFileName(), category, chunks);
             return chunks;
         } catch (Exception e) {
             log.warn("[ingest] failed {}: {}", file, e.toString());
             return 0;
         }
-    }
-
-    private static boolean isText(Path path) {
-        String name = path.getFileName().toString().toLowerCase();
-        return name.endsWith(".md") || name.endsWith(".txt") || name.endsWith(".markdown");
     }
 }

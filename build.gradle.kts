@@ -21,6 +21,8 @@ dependencies {
     implementation(libs.agent.store.jdbc)
     implementation(libs.langchain4j.ollama)
     implementation(libs.langchain4j.mcp)
+    implementation(libs.tika.core)
+    implementation(libs.tika.parsers)
     runtimeOnly(libs.postgresql)
     implementation(libs.spring.boot.web)
     implementation(libs.spring.boot.actuator)
