@@ -62,6 +62,7 @@ class AgentConfig {
                 .baseUrl(props.ollamaBaseUrl())
                 .modelName(props.model())
                 .numCtx(props.numCtx())
+                .timeout(Duration.ofMinutes(10)) // long generations (esp. auto-continuation) mustn't time out
                 .build();
         return new LangChain4jStreamingModelPort(model, "ollama-stream:" + props.model());
     }
