@@ -133,8 +133,11 @@ public final class CosPrompts {
                3. Cite the source filename for every factual claim, e.g. "(source: attention.md)".
                4. Search first (search_local_documents, or search_by_category when a category is named); use
                   list_directory / read_text_file for files under %s.
-               5. For recent or external information (not the user's own documents), use tavily_search and
-                  cite the source URL.
+               5. For recent or external information (not the user's own documents), use tavily_search.
+                  PREFER PRIMARY sources — arXiv / official papers, technical reports, vendor blogs, and
+                  model cards — over blogs, forums, social media (Facebook / Reddit / YouTube), or videos.
+                  Cite the FULL source URL (starting with https://), never a bare domain or a truncated
+                  ".../..." path.
                """
                 .formatted(LANGUAGE_RULE, USER_PROFILE, PROJECT_CONTEXT, dataDir, dataDir);
     }
@@ -177,9 +180,13 @@ public final class CosPrompts {
 
                Rules:
                1. Write ONLY from the provided research notes — never add facts that aren't in them.
-               2. Preserve every citation (URL or filename) from the notes, inline near the claim it supports.
-               3. Match the requested length and format (report / article / deep-dive); use markdown headings.
-               4. Structure it: a short executive summary, then sections, then a brief outlook if relevant.
+               2. Preserve every citation from the notes as a FULL URL (starting with https://) or filename,
+                  inline near the claim it supports — never a bare domain or a truncated ".../..." path.
+               3. Cover the material well, then STOP. The requested length is an approximate target, not a
+                  quota: never pad, restate a point, or repeat conclusions to reach a word count. A tight,
+                  complete report beats a padded one.
+               4. Use markdown headings; structure it as a short executive summary, then sections, then a
+                  brief outlook only if it adds something.
                """
                 .formatted(LANGUAGE_RULE, USER_PROFILE, PROJECT_CONTEXT);
     }

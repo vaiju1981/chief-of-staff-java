@@ -30,16 +30,28 @@ public final class GenerationAgent implements ChatAgent {
     private final String systemPrompt;
     private final ModelPort model;
     private final StreamingModelPort streamingModel;
+    private final boolean autoContinue;
 
     public GenerationAgent(String systemPrompt, ModelPort model, StreamingModelPort streamingModel) {
+        this(systemPrompt, model, streamingModel, true);
+    }
+
+    /**
+     * @param autoContinue whether to re-prompt for more text to hit a requested word count. True for free
+     *     composition (comms / code). Pass <b>false</b> for a grounded writer (the report writer): its
+     *     length must follow the evidence, so forcing it to a quota only makes a small model pad and restate.
+     */
+    public GenerationAgent(String systemPrompt, ModelPort model, StreamingModelPort streamingModel,
+            boolean autoContinue) {
         this.systemPrompt = systemPrompt;
         this.model = model;
         this.streamingModel = streamingModel;
+        this.autoContinue = autoContinue;
     }
 
     @Override
     public AgentResponse respond(List<Message> conversation) {
-        int target = targetWords(Conversations.latestUser(conversation));
+        int target = autoContinue ? targetWords(Conversations.latestUser(conversation)) : 0;
         StringBuilder full = new StringBuilder(text(model.chat(request(conversation, null))));
         for (int i = 0; i < MAX_CONTINUATIONS && shortOf(full, target); i++) {
             String more = text(model.chat(request(conversation, full.toString()))).strip();
@@ -53,7 +65,7 @@ public final class GenerationAgent implements ChatAgent {
 
     @Override
     public AgentResponse respondStreaming(List<Message> conversation, Consumer<String> onToken) {
-        int target = targetWords(Conversations.latestUser(conversation));
+        int target = autoContinue ? targetWords(Conversations.latestUser(conversation)) : 0;
         StringBuilder full = new StringBuilder();
         Consumer<String> collect = token -> {
             full.append(token);

@@ -112,7 +112,7 @@ class AgentConfig {
         // Report: research→write pipeline — researcher gathers cited findings, then a streaming writer
         // composes the long-form grounded report. Does web search AND a long report, and streams.
         specialists.put("report", new ReportAgent(researcher,
-                new GenerationAgent(CosPrompts.reportWriter(), model, streamingModel)));
+                new GenerationAgent(CosPrompts.reportWriter(), model, streamingModel, false)));
 
         StructuredOutput router = OllamaModelPorts.ollamaStructured(props.ollamaBaseUrl(), props.model());
         Supervisor supervisor = new Supervisor(model, streamingModel, router, specialists);
