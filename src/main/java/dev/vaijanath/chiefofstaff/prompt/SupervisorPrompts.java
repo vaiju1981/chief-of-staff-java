@@ -42,18 +42,25 @@ public final class SupervisorPrompts {
                 + "questions, and reports or summaries that need web search or up-to-date information");
         EXAMPLES.put("researcher", List.of(
                 "What's the difference between RNN and Transformer? -> researcher",
-                "Search news about Granite 4 -> researcher",
-                "Write a report on the latest developments in AI, using web search -> researcher",
-                "Research recent advances in state-space models and summarize them -> researcher"));
+                "Search the web for news about Granite 4 -> researcher",
+                "What does my attention paper say about multi-head attention? -> researcher"));
 
-        CATALOG.put("comms", "writing content directly — emails, messages, announcements, notes, AND "
-                + "long-form articles / reports / essays / deep-dives of ANY length. No retrieval. This is "
-                + "where writing actually gets DONE (the model writes the full text here).");
+        CATALOG.put("report", "research a topic (web + the user's documents) and WRITE a long-form, cited "
+                + "report / article / deep-dive grounded in it — when the request needs BOTH research or web "
+                + "search AND substantial writing");
+        EXAMPLES.put("report", List.of(
+                "Write a report on the latest developments in AI, using web search -> report",
+                "Research and write a 3000-word cited deep-dive on state-space models -> report",
+                "Write a detailed article on recent advances in X, with sources -> report"));
+
+        CATALOG.put("comms", "writing from given or already-known information — emails, messages, "
+                + "announcements, notes, rewrites, and articles that need NO research. (If it needs web "
+                + "search or document research, use report instead.)");
         EXAMPLES.put("comms", List.of(
                 "Draft an email to cancel the meeting -> comms",
                 "Write a message to my team announcing the project -> comms",
-                "Write a 4000-word deep-dive on transformer positional encodings -> comms",
-                "Write a detailed 5000-word article on X -> comms"));
+                "Turn these bullet points into a polished announcement -> comms",
+                "Rewrite this paragraph to be more formal -> comms"));
 
         CATALOG.put("notes", "exploration and search inside the notes vault (meetings, personal projects, "
                 + "daily notes)");

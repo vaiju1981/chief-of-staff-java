@@ -165,6 +165,25 @@ public final class CosPrompts {
                 .formatted(LANGUAGE_RULE, USER_PROFILE, PROJECT_CONTEXT, vaultDir);
     }
 
+    /** Report writer prompt: composes a long-form, cited piece strictly from researched notes. */
+    public static String reportWriter() {
+        return """
+               You are a report writer. You turn researched notes into a polished, well-structured piece.
+
+               %s
+               %s
+
+               %s
+
+               Rules:
+               1. Write ONLY from the provided research notes — never add facts that aren't in them.
+               2. Preserve every citation (URL or filename) from the notes, inline near the claim it supports.
+               3. Match the requested length and format (report / article / deep-dive); use markdown headings.
+               4. Structure it: a short executive summary, then sections, then a brief outlook if relevant.
+               """
+                .formatted(LANGUAGE_RULE, USER_PROFILE, PROJECT_CONTEXT);
+    }
+
     /** Meeting agent system prompt (ported from meeting.py): pilots recordings; never fabricates summaries. */
     public static String meeting() {
         return """

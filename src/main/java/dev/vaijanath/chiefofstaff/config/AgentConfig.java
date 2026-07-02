@@ -17,6 +17,7 @@ import dev.vaijanath.aiagent.tools.annotations.ReflectiveTools;
 import dev.vaijanath.chiefofstaff.agent.ChatAgent;
 import dev.vaijanath.chiefofstaff.agent.GenerationAgent;
 import dev.vaijanath.chiefofstaff.agent.Handoff;
+import dev.vaijanath.chiefofstaff.agent.ReportAgent;
 import dev.vaijanath.chiefofstaff.agent.Supervisor;
 import dev.vaijanath.chiefofstaff.agent.ToolChatAgent;
 import dev.vaijanath.chiefofstaff.meeting.MeetingTools;
@@ -96,9 +97,10 @@ class AgentConfig {
 
         // Researcher: library RAG + filesystem read + web (Tavily, when TAVILY_API_KEY is set).
         // Notes: meeting RAG + vault exploration. Tool agents flatten the conversation into their input.
-        specialists.put("researcher", new ToolChatAgent(toolAgent(model, CosPrompts.researcher(dataDir),
+        ChatAgent researcher = new ToolChatAgent(toolAgent(model, CosPrompts.researcher(dataDir),
                 concat(only(ragTools, "search_local_documents", "search_by_category"),
-                        mcp.select("list_directory", "read_text_file", "tavily_search", "tavily_extract")))));
+                        mcp.select("list_directory", "read_text_file", "tavily_search", "tavily_extract"))));
+        specialists.put("researcher", researcher);
         specialists.put("notes", new ToolChatAgent(toolAgent(model, CosPrompts.notes(vaultDir),
                 concat(only(ragTools, "search_meetings"),
                         mcp.select("list_directory", "read_text_file", "search_files", "directory_tree")))));
@@ -106,6 +108,11 @@ class AgentConfig {
         // Meeting: pilot the recorder from chat (start / stop / status).
         specialists.put("meeting", new ToolChatAgent(
                 toolAgent(model, CosPrompts.meeting(), ReflectiveTools.from(meetingTools))));
+
+        // Report: research→write pipeline — researcher gathers cited findings, then a streaming writer
+        // composes the long-form grounded report. Does web search AND a long report, and streams.
+        specialists.put("report", new ReportAgent(researcher,
+                new GenerationAgent(CosPrompts.reportWriter(), model, streamingModel)));
 
         StructuredOutput router = OllamaModelPorts.ollamaStructured(props.ollamaBaseUrl(), props.model());
         Supervisor supervisor = new Supervisor(model, streamingModel, router, specialists);
