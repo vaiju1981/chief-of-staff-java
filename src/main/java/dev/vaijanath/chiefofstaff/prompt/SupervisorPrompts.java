@@ -37,11 +37,14 @@ public final class SupervisorPrompts {
                 "How can I record my Teams meeting? -> meta_recording",
                 "Comment enregistrer l'audio d'une réunion ? -> meta_recording"));
 
-        CATALOG.put("researcher", "information lookup (indexed papers, web, filesystem); technical or "
-                + "factual questions, documentation");
+        CATALOG.put("researcher", "information lookup and research — the user's indexed documents, the WEB "
+                + "(current / latest news, recent developments), and the filesystem; technical or factual "
+                + "questions, and reports or summaries that need web search or up-to-date information");
         EXAMPLES.put("researcher", List.of(
                 "What's the difference between RNN and Transformer? -> researcher",
-                "Search news about Granite 4 -> researcher"));
+                "Search news about Granite 4 -> researcher",
+                "Write a report on the latest developments in AI, using web search -> researcher",
+                "Research recent advances in state-space models and summarize them -> researcher"));
 
         CATALOG.put("comms", "writing content directly — emails, messages, announcements, notes, AND "
                 + "long-form articles / reports / essays / deep-dives of ANY length. No retrieval. This is "
