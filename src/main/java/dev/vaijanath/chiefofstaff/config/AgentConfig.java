@@ -109,9 +109,13 @@ class AgentConfig {
         specialists.put("meeting", new ToolChatAgent(
                 toolAgent(model, CosPrompts.meeting(), ReflectiveTools.from(meetingTools))));
 
-        // Report: research→write pipeline — researcher gathers cited findings, then a streaming writer
-        // composes the long-form grounded report. Does web search AND a long report, and streams.
-        specialists.put("report", new ReportAgent(researcher,
+        // Report: research→verify→write pipeline. The researcher gathers cited findings, a verifier
+        // adversarially re-checks each claim against its source (preferring primary sources), then a
+        // streaming writer composes the grounded report. Verify is skipped if web tools aren't configured.
+        List<Tool> tavilyTools = mcp.select("tavily_search", "tavily_extract");
+        ChatAgent verifier = tavilyTools.isEmpty() ? null
+                : new ToolChatAgent(toolAgent(model, CosPrompts.verifier(), tavilyTools));
+        specialists.put("report", new ReportAgent(researcher, verifier,
                 new GenerationAgent(CosPrompts.reportWriter(), model, streamingModel, false)));
 
         StructuredOutput router = OllamaModelPorts.ollamaStructured(props.ollamaBaseUrl(), props.model());
