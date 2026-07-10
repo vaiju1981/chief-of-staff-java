@@ -60,8 +60,8 @@ idea → Creator (tool loop)
   `read_pdf`, `save_note`, `fetch_image`.
 - **P1** — wire `agent-creator` in `AgentConfig`, supervisor route, save+index, stream test.
 - **P2** — image enrichment: `fetch_image` downloads to `assets/`, grounded embedding in the note.
-- **P3** — `search_arxiv`, `medium_search`, `youtube_transcript`; citation/reference polish;
-  unit + integration tests.
+- **P3** — `search_arxiv`, `medium_search`, `youtube_transcript`; citation/reference polish; **hermetic
+  unit tests** (read_page image discovery, fetch_image download, parseArxiv, supervisor→creator routing).
 
 ## Files touched
 - New: `agent/CreatorTools.java`; prompt in `CosPrompts.creator()`.

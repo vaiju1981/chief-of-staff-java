@@ -138,23 +138,28 @@ public class CreatorTools {
             String url = "https://export.arxiv.org/api/query?search_query=all:" + q
                     + "&start=0&max_results=5&sortBy=submittedDate&sortOrder=descending";
             String xml = new String(get(url, "application/atom+xml, application/xml, text/xml"), StandardCharsets.UTF_8);
-            StringBuilder sb = new StringBuilder();
-            Matcher e = ENTRY.matcher(xml);
-            int i = 1;
-            while (e.find() && i <= 5) {
-                String block = e.group(1);
-                String title = tag(block, "title");
-                String summary = tag(block, "summary");
-                String id = tag(block, "id");
-                String pdf = id.replace("/abs/", "/pdf/");
-                sb.append(i++).append(". ").append(title).append("\n   arxiv: ").append(id)
-                        .append("\n   pdf: ").append(pdf).append("\n   ")
-                        .append(summary.length() > 500 ? summary.substring(0, 500) : summary).append("\n\n");
-            }
-            return sb.length() == 0 ? "No Arxiv results for that query." : sb.toString();
+            return parseArxiv(xml);
         } catch (Exception ex) {
             return "Arxiv search failed (" + ex.getMessage() + ").";
         }
+    }
+
+    /** Parse an Arxiv Atom feed into the tool's result text. Package-private for testing. */
+    static String parseArxiv(String xml) {
+        StringBuilder sb = new StringBuilder();
+        Matcher e = ENTRY.matcher(xml);
+        int i = 1;
+        while (e.find() && i <= 5) {
+            String block = e.group(1);
+            String title = tag(block, "title");
+            String summary = tag(block, "summary");
+            String id = tag(block, "id");
+            String pdf = id.replace("/abs/", "/pdf/");
+            sb.append(i++).append(". ").append(title).append("\n   arxiv: ").append(id)
+                    .append("\n   pdf: ").append(pdf).append("\n   ")
+                    .append(summary.length() > 500 ? summary.substring(0, 500) : summary).append("\n\n");
+        }
+        return sb.length() == 0 ? "No Arxiv results for that query." : sb.toString();
     }
 
     @AgentTool(

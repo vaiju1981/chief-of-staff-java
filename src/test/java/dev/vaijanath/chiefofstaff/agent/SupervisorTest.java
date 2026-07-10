@@ -56,4 +56,13 @@ class SupervisorTest {
         Supervisor s = supervisor(new Supervisor.Route("nonexistent"), "META_REPLY", specialists);
         assertTrue(s.respond(List.of(Message.user("hello"))).output().contains("META_REPLY"));
     }
+
+    @Test
+    void routesToCreatorSpecialist() {
+        Map<String, ChatAgent> specialists = new LinkedHashMap<>();
+        specialists.put("creator", new TestDoubles.StubChatAgent("CREATOR_OUT"));
+        specialists.put("comms", new TestDoubles.StubChatAgent("COMMS_OUT"));
+        Supervisor s = supervisor(new Supervisor.Route("creator"), "META", specialists);
+        assertEquals("CREATOR_OUT", s.respond(List.of(Message.user("make me a note on RAG"))).output());
+    }
 }
