@@ -1,12 +1,12 @@
 package dev.vaijanath.chiefofstaff.agent;
 
-import dev.vaijanath.aiagent.rag.RetrievedChunk;
 import dev.vaijanath.aiagent.tool.ToolEffect;
 import dev.vaijanath.aiagent.tools.annotations.AgentTool;
 import dev.vaijanath.aiagent.tools.annotations.ToolParam;
 import dev.vaijanath.chiefofstaff.config.CosProperties;
 import dev.vaijanath.chiefofstaff.rag.RagStore;
 import dev.vaijanath.chiefofstaff.rag.TextExtraction;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -29,7 +29,8 @@ import org.springframework.stereotype.Component;
  * (no npx/MCP) so they are pinnable and safe. The workhorse is {@link #readPage}: it deep-reads any URL
  * into clean text and discovers its images, so the agent can go from a search result link to real
  * content. {@link #fetchImage} grounds images by downloading them and returning only the local path the
- * note may embed; {@link #saveNote} persists the finished note to the vault and indexes it.
+ * note may embed; {@link #saveNote} persists the finished note to the vault, grounds its image
+ * references, and indexes it.
  */
 @Component
 public class CreatorTools {
@@ -45,6 +46,10 @@ public class CreatorTools {
     private static final Pattern DATA_SRC =
             Pattern.compile("\\bdata-src\\s*=\\s*\"([^\"]+)\"", Pattern.CASE_INSENSITIVE);
     private static final Pattern ALT = Pattern.compile("\\balt\\s*=\\s*\"([^\"]*)\"", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MD_IMG = Pattern.compile("!\\[([^\\]]*)\\]\\(([^)]+)\\)");
+    private static final long MAX_IMAGE_BYTES = 10L * 1024 * 1024;
+    private static final String TRACKING = "pixel|tracking|analytics|beacon|1x1";
+
     private static final String NOTHING = "NO CONTENT FOUND at that URL (unreachable, blocked, or not text). "
             + "Tell the user you couldn't read it and try another source — do NOT invent its content.";
 
@@ -70,7 +75,7 @@ public class CreatorTools {
         }
         try {
             byte[] bytes = get(url, "text/html,application/xhtml+xml");
-            String text = TIKA.parseToString(new java.io.ByteArrayInputStream(bytes)).strip();
+            String text = TIKA.parseToString(new ByteArrayInputStream(bytes)).strip();
             List<ImageRef> images = imagesOn(new String(bytes), url);
             StringBuilder sb = new StringBuilder();
             sb.append(text.isBlank() ? "(no readable text extracted)" : text);
@@ -126,8 +131,23 @@ public class CreatorTools {
             return "Refused: only http(s) image URLs are allowed.";
         }
         try {
-            byte[] bytes = get(url, "image/*");
-            String ext = extFrom(url, bytes);
+            HttpResponse<byte[]> response = http.send(
+                    HttpRequest.newBuilder()
+                            .uri(URI.create(url))
+                            .timeout(java.time.Duration.ofSeconds(30))
+                            .header("Accept", "image/*")
+                            .GET()
+                            .build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                return "Could not fetch image (HTTP " + response.statusCode() + "). Skip it.";
+            }
+            byte[] bytes = response.body();
+            if (bytes.length > MAX_IMAGE_BYTES) {
+                return "Image too large (" + (bytes.length / 1024 / 1024) + " MB); skipped to avoid bloat.";
+            }
+            String ctype = response.headers().firstValue("content-type").orElse("");
+            String ext = extFrom(url, ctype, bytes);
             String base = (name == null || name.isBlank()) ? "img" : slugify(name);
             Path assets = Path.of(props.dataDir(), "vault", "creator", "assets");
             Files.createDirectories(assets);
@@ -143,7 +163,8 @@ public class CreatorTools {
     @AgentTool(
             name = "save_note",
             description = "Save the finished note (markdown) to the vault and index it for search. Call this once "
-                    + "with the complete note.",
+                    + "with the complete note. Image references are grounded: any ![](assets/...) path that was "
+                    + "not actually fetched is dropped so the saved note never links to a missing image.",
             effect = ToolEffect.EFFECTFUL)
     public String saveNote(
             @ToolParam(description = "Note title") String title,
@@ -155,8 +176,10 @@ public class CreatorTools {
             String slug = slugify(title);
             Path file = dir.resolve(date + "_" + slug + ".md");
             String front = "---\ndate: " + date + "\ntype: creator\ntags: [creator, note]\n---\n\n";
-            Files.writeString(file, front + markdown);
-            int chunks = rag.ingest("creator", file.getFileName().toString(), "creator", front + markdown);
+            String body = front + markdown;
+            body = groundImages(body, dir.resolve("assets"));
+            Files.writeString(file, body);
+            int chunks = rag.ingest("creator", file.getFileName().toString(), "creator", body);
             return "✅ Note saved to " + file + " and indexed (" + chunks + " chunks).";
         } catch (Exception e) {
             return "❌ Could not save note: " + e.getMessage();
@@ -198,6 +221,9 @@ public class CreatorTools {
             if (src == null || src.isBlank() || src.startsWith("data:")) {
                 continue;
             }
+            if (src.toLowerCase(Locale.ROOT).matches(".*(" + TRACKING + ").*")) {
+                continue; // skip tracking pixels / beacons
+            }
             out.add(new ImageRef(resolve(base, src), first(ALT, tag)));
         }
         return out;
@@ -216,7 +242,41 @@ public class CreatorTools {
         }
     }
 
-    private static String extFrom(String url, byte[] bytes) {
+    /** Replace any ![](assets/...) reference whose file isn't actually present with a comment. */
+    private static String groundImages(String markdown, Path assetsDir) {
+        Matcher m = MD_IMG.matcher(markdown);
+        StringBuffer sb = new StringBuffer();
+        int dropped = 0;
+        while (m.find()) {
+            String path = m.group(2).strip();
+            if (path.startsWith("assets/") && !Files.exists(assetsDir.resolve(path.substring("assets/".length())))) {
+                m.appendReplacement(sb, "<!-- image not fetched, removed: " + path + " -->");
+                dropped++;
+            } else {
+                m.appendReplacement(sb, m.group(0));
+            }
+        }
+        m.appendTail(sb);
+        return dropped == 0 ? markdown : sb.toString();
+    }
+
+    private static String extFrom(String url, String contentType, byte[] bytes) {
+        String ct = contentType == null ? "" : contentType.toLowerCase(Locale.ROOT);
+        if (ct.contains("png")) {
+            return ".png";
+        }
+        if (ct.contains("jpeg") || ct.contains("jpg")) {
+            return ".jpg";
+        }
+        if (ct.contains("gif")) {
+            return ".gif";
+        }
+        if (ct.contains("webp")) {
+            return ".webp";
+        }
+        if (ct.contains("svg")) {
+            return ".svg";
+        }
         String u = url.toLowerCase(Locale.ROOT);
         if (u.contains(".png")) {
             return ".png";
