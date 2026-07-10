@@ -4,9 +4,8 @@
 > retrieval tools, reads the real content (text **and** images), and synthesizes a structured, cited
 > note that is saved to the vault and indexed for later search.
 
-Status: **P0 + P1 + P2 implemented** — creator agent wired, routes, persists notes; images are sourced,
-size-capped, extension-sniffed from content-type, and grounded on save (missing `assets/` refs dropped).
-P3 (arxiv / medium / youtube sources) remains.
+Status: **complete** — P0 (tools + prompt), P1 (wiring + routing + persistence), P2 (image enrichment),
+P3 (arxiv / medium / youtube sources) are all implemented.
 
 ## Decisions (locked)
 - **Images:** sourced only — `fetch_image` pulls real figures from retrieved pages/papers. No AI image

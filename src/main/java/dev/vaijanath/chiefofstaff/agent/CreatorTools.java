@@ -1,5 +1,7 @@
 package dev.vaijanath.chiefofstaff.agent;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vaijanath.aiagent.tool.ToolEffect;
 import dev.vaijanath.aiagent.tools.annotations.AgentTool;
 import dev.vaijanath.aiagent.tools.annotations.ToolParam;
@@ -9,11 +11,14 @@ import dev.vaijanath.chiefofstaff.rag.TextExtraction;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -28,9 +33,10 @@ import org.springframework.stereotype.Component;
  * Retrieval + persistence tools for the Creator (content) agent. Plain {@code @AgentTool} Java methods
  * (no npx/MCP) so they are pinnable and safe. The workhorse is {@link #readPage}: it deep-reads any URL
  * into clean text and discovers its images, so the agent can go from a search result link to real
- * content. {@link #fetchImage} grounds images by downloading them and returning only the local path the
- * note may embed; {@link #saveNote} persists the finished note to the vault, grounds its image
- * references, and indexes it.
+ * content. Source-specific search tools ({@link #searchArxiv}, {@link #mediumSearch},
+ * {@link #youtubeTranscript}) feed URLs into it. {@link #fetchImage} grounds images by downloading them
+ * and returning only the local path the note may embed; {@link #saveNote} persists the finished note to
+ * the vault, grounds its image references, and indexes it.
  */
 @Component
 public class CreatorTools {
@@ -47,6 +53,7 @@ public class CreatorTools {
             Pattern.compile("\\bdata-src\\s*=\\s*\"([^\"]+)\"", Pattern.CASE_INSENSITIVE);
     private static final Pattern ALT = Pattern.compile("\\balt\\s*=\\s*\"([^\"]*)\"", Pattern.CASE_INSENSITIVE);
     private static final Pattern MD_IMG = Pattern.compile("!\\[([^\\]]*)\\]\\(([^)]+)\\)");
+    private static final Pattern ENTRY = Pattern.compile("<entry>([\\s\\S]*?)</entry>");
     private static final long MAX_IMAGE_BYTES = 10L * 1024 * 1024;
     private static final String TRACKING = "pixel|tracking|analytics|beacon|1x1";
 
@@ -54,6 +61,7 @@ public class CreatorTools {
             + "Tell the user you couldn't read it and try another source — do NOT invent its content.";
 
     private final HttpClient http = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build();
+    private final ObjectMapper json = new ObjectMapper();
     private final CosProperties props;
     private final RagStore rag;
 
@@ -119,6 +127,80 @@ public class CreatorTools {
     }
 
     @AgentTool(
+            name = "search_arxiv",
+            description = "Search Arxiv papers by keyword; returns titles, arxiv links, and PDF URLs. Use "
+                    + "read_pdf on a PDF URL (or read_page on the abstract) to read the full paper.",
+            effect = ToolEffect.READ_ONLY)
+    public String searchArxiv(
+            @ToolParam(description = "Search query") String query) {
+        try {
+            String q = URLEncoder.encode(query, StandardCharsets.UTF_8);
+            String url = "https://export.arxiv.org/api/query?search_query=all:" + q
+                    + "&start=0&max_results=5&sortBy=submittedDate&sortOrder=descending";
+            String xml = new String(get(url, "application/atom+xml, application/xml, text/xml"), StandardCharsets.UTF_8);
+            StringBuilder sb = new StringBuilder();
+            Matcher e = ENTRY.matcher(xml);
+            int i = 1;
+            while (e.find() && i <= 5) {
+                String block = e.group(1);
+                String title = tag(block, "title");
+                String summary = tag(block, "summary");
+                String id = tag(block, "id");
+                String pdf = id.replace("/abs/", "/pdf/");
+                sb.append(i++).append(". ").append(title).append("\n   arxiv: ").append(id)
+                        .append("\n   pdf: ").append(pdf).append("\n   ")
+                        .append(summary.length() > 500 ? summary.substring(0, 500) : summary).append("\n\n");
+            }
+            return sb.length() == 0 ? "No Arxiv results for that query." : sb.toString();
+        } catch (Exception ex) {
+            return "Arxiv search failed (" + ex.getMessage() + ").";
+        }
+    }
+
+    @AgentTool(
+            name = "medium_search",
+            description = "Search Medium articles (scoped web search via Tavily). Returns titles, URLs, and "
+                    + "snippets. Use read_page on a URL to read the article. Needs TAVILY_API_KEY.",
+            effect = ToolEffect.READ_ONLY)
+    public String mediumSearch(
+            @ToolParam(description = "Search query") String query) {
+        if (!props.hasTavily()) {
+            return "Medium search needs TAVILY_API_KEY (not set). Use web_search instead.";
+        }
+        return tavilySearch(query, List.of("medium.com"));
+    }
+
+    @AgentTool(
+            name = "youtube_transcript",
+            description = "Fetch the transcript of a YouTube video as text (via yt-dlp). Use for video sources. "
+                    + "Requires yt-dlp installed on the PATH.",
+            effect = ToolEffect.READ_ONLY)
+    public String youtubeTranscript(
+            @ToolParam(description = "YouTube video URL") String url) {
+        if (!isHttp(url)) {
+            return "Refused: only http(s) URLs are allowed.";
+        }
+        try {
+            Path tmp = Files.createTempDirectory("creator-yt");
+            int code = run(new ProcessBuilder("yt-dlp", "--write-auto-subs", "--sub-langs", "en*",
+                    "--skip-download", "-o", tmp.resolve("v").toString(), url));
+            Path vtt = Files.list(tmp).filter(f -> f.toString().endsWith(".vtt")).findFirst().orElse(null);
+            if (vtt != null) {
+                String text = vttToText(vtt);
+                if (!text.isBlank()) {
+                    return text.length() > 8000 ? text.substring(0, 8000) : text;
+                }
+            }
+            // Fallback: at least recover the title.
+            String title = runJsonTitle(new ProcessBuilder("yt-dlp", "--dump-json", url));
+            return "No transcript available for this video (exit " + code + ")."
+                    + (title.isEmpty() ? "" : " Title: " + title);
+        } catch (Exception e) {
+            return "Could not get YouTube transcript (" + e.getMessage() + "). Is yt-dlp installed?";
+        }
+    }
+
+    @AgentTool(
             name = "fetch_image",
             description = "Download an image URL into the note's assets folder and return the RELATIVE path "
                     + "(assets/<file>) to embed in markdown. Only call this with URLs discovered by read_page.",
@@ -134,7 +216,7 @@ public class CreatorTools {
             HttpResponse<byte[]> response = http.send(
                     HttpRequest.newBuilder()
                             .uri(URI.create(url))
-                            .timeout(java.time.Duration.ofSeconds(30))
+                            .timeout(Duration.ofSeconds(30))
                             .header("Accept", "image/*")
                             .GET()
                             .build(),
@@ -191,7 +273,7 @@ public class CreatorTools {
     private byte[] get(String url, String accept) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
-                .timeout(java.time.Duration.ofSeconds(30))
+                .timeout(Duration.ofSeconds(30))
                 .header("Accept", accept)
                 .GET()
                 .build();
@@ -200,6 +282,80 @@ public class CreatorTools {
             throw new IOException("HTTP " + response.statusCode());
         }
         return response.body();
+    }
+
+    private String tavilySearch(String query, List<String> includeDomains) {
+        try {
+            ObjectMapper om = this.json;
+            com.fasterxml.jackson.databind.node.ObjectNode req = om.createObjectNode();
+            req.put("api_key", props.tavilyApiKey());
+            req.put("query", query);
+            req.put("max_results", 5);
+            req.put("search_depth", "advanced");
+            com.fasterxml.jackson.databind.node.ArrayNode dom = req.putArray("include_domains");
+            includeDomains.forEach(dom::add);
+            HttpRequest r = HttpRequest.newBuilder()
+                    .uri(URI.create("https://api.tavily.com/search"))
+                    .header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(30))
+                    .POST(HttpRequest.BodyPublishers.ofString(om.writeValueAsString(req)))
+                    .build();
+            HttpResponse<String> resp = http.send(r, HttpResponse.BodyHandlers.ofString());
+            JsonNode root = om.readTree(resp.body());
+            StringBuilder sb = new StringBuilder();
+            JsonNode results = root.get("results");
+            if (results != null) {
+                int i = 1;
+                for (JsonNode it : results) {
+                    String content = it.path("content").asText();
+                    sb.append(i++).append(". ").append(it.path("title").asText()).append("\n   ")
+                            .append(it.path("url").asText()).append("\n   ")
+                            .append(content.length() > 400 ? content.substring(0, 400) : content).append("\n\n");
+                }
+            }
+            return sb.length() == 0 ? "No results." : sb.toString();
+        } catch (Exception e) {
+            return "Medium search failed (" + e.getMessage() + ").";
+        }
+    }
+
+    private int run(ProcessBuilder pb) throws IOException, InterruptedException {
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        p.getInputStream().readAllBytes();
+        return p.waitFor();
+    }
+
+    private String runJsonTitle(ProcessBuilder pb) {
+        try {
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            p.waitFor();
+            int i = out.indexOf("\"title\":");
+            if (i < 0) {
+                return "";
+            }
+            int q1 = out.indexOf('"', i + 8);
+            int q2 = out.indexOf('"', q1 + 1);
+            return q1 >= 0 && q2 > q1 ? out.substring(q1 + 1, q2) : "";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private static String vttToText(Path vtt) throws IOException {
+        List<String> lines = Files.readAllLines(vtt);
+        StringBuilder sb = new StringBuilder();
+        for (String line : lines) {
+            String t = line.trim();
+            if (t.isEmpty() || t.startsWith("WEBVTT") || t.startsWith("NOTE") || t.contains("-->")
+                    || t.matches("\\d+")) {
+                continue;
+            }
+            sb.append(t).append(" ");
+        }
+        return sb.toString().strip();
     }
 
     private static boolean isHttp(String url) {
@@ -240,6 +396,12 @@ public class CreatorTools {
         } catch (Exception e) {
             return src;
         }
+    }
+
+    private static String tag(String block, String name) {
+        Matcher m = Pattern.compile("<" + name + ">([\\s\\S]*?)</" + name + ">", Pattern.CASE_INSENSITIVE)
+                .matcher(block);
+        return m.find() ? m.group(1).replaceAll("\\s+", " ").strip() : "";
     }
 
     /** Replace any ![](assets/...) reference whose file isn't actually present with a comment. */

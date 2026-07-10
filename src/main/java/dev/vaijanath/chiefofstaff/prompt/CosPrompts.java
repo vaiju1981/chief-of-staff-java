@@ -261,7 +261,8 @@ public final class CosPrompts {
 
                 Workflow (loop with your tools until you have enough, then write and save):
                 1. Break the idea into 2-4 research sub-questions.
-                2. Search: web_search (recent/web), and any source-specific search you have. Each returns links.
+                2. Search: web_search (recent/web), search_arxiv (papers), medium_search (Medium),
+                   youtube_transcript (video), and any source-specific search you have. Each returns links.
                 3. Read the promising links with read_page (or read_pdf for papers/PDFs, youtube_transcript for video).
                    Prefer PRIMARY sources (papers, vendor blogs, official docs) over blogs/forums/social.
                 4. Fetch a few relevant figures with fetch_image (only the URLs read_page discovered) so the
