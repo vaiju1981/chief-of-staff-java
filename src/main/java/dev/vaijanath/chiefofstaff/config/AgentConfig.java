@@ -17,6 +17,7 @@ import dev.vaijanath.chiefofstaff.config.MeteredModelPort;
 import dev.vaijanath.chiefofstaff.config.MeteredStreamingModelPort;
 import dev.vaijanath.aiagent.tools.annotations.ReflectiveTools;
 import dev.vaijanath.chiefofstaff.agent.ChatAgent;
+import dev.vaijanath.chiefofstaff.agent.CreatorTools;
 import dev.vaijanath.chiefofstaff.agent.GenerationAgent;
 import dev.vaijanath.chiefofstaff.agent.Handoff;
 import dev.vaijanath.chiefofstaff.agent.ReportAgent;
@@ -80,7 +81,7 @@ class AgentConfig {
     @Bean
     Map<String, ChatAgent> agents(
             ModelPort model, StreamingModelPort streamingModel, CosProperties props, RagStore rag,
-            McpToolSource mcp, MeetingTools meetingTools) {
+            McpToolSource mcp, MeetingTools meetingTools, CreatorTools creatorTools) {
         List<Tool> ragTools = ReflectiveTools.from(new RagTools(rag));
         String dataDir = Path.of(props.dataDir()).toAbsolutePath().toString();
         String vaultDir = Path.of(props.dataDir(), "vault").toAbsolutePath().toString();
@@ -110,6 +111,11 @@ class AgentConfig {
         // Meeting: pilot the recorder from chat (start / stop / status).
         specialists.put("meeting", new ToolChatAgent(
                 toolAgent(model, CosPrompts.meeting(), ReflectiveTools.from(meetingTools))));
+
+        // Creator: autonomous notes generator — research via tools, read real content + images, save note.
+        List<Tool> tavilyToolsForCreator = mcp.select("tavily_search", "tavily_extract");
+        specialists.put("creator", new ToolChatAgent(toolAgent(
+                model, CosPrompts.creator(), concat(ReflectiveTools.from(creatorTools), tavilyToolsForCreator))));
 
         // Report: research→verify→write pipeline. The researcher gathers cited findings, a verifier
         // adversarially re-checks each claim against its source (preferring primary sources), then a

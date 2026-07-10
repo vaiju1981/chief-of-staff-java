@@ -67,6 +67,14 @@ public final class SupervisorPrompts {
         EXAMPLES.put("notes", List.of(
                 "What meeting notes do I have on project X? -> notes", "List my vault notes -> notes"));
 
+        CATALOG.put("creator", "CONTENT CREATOR mode — given an idea, autonomously research via web search, "
+                + "Arxiv, Medium, YouTube, and the user's PDFs, read the real content (text + images), and "
+                + "write + SAVE a structured, cited note to the vault");
+        EXAMPLES.put("creator", List.of(
+                "Make me a note on vector databases -> creator",
+                "Research and save a note about RAG evaluation -> creator",
+                "Content mode: a note on prompt caching -> creator"));
+
         CATALOG.put("code", "programming questions, algorithms, debugging, GitHub issue management");
         EXAMPLES.put("code", List.of(
                 "How do I implement an LRU cache in Python? -> code",
