@@ -13,6 +13,8 @@ import dev.vaijanath.aiagent.model.StructuredOutput;
 import dev.vaijanath.aiagent.rag.Embedder;
 import dev.vaijanath.aiagent.tool.Tool;
 import dev.vaijanath.aiagent.tool.ToolApprovers;
+import dev.vaijanath.chiefofstaff.config.MeteredModelPort;
+import dev.vaijanath.chiefofstaff.config.MeteredStreamingModelPort;
 import dev.vaijanath.aiagent.tools.annotations.ReflectiveTools;
 import dev.vaijanath.chiefofstaff.agent.ChatAgent;
 import dev.vaijanath.chiefofstaff.agent.GenerationAgent;
@@ -54,7 +56,7 @@ class AgentConfig {
                 .numCtx(props.numCtx())
                 .timeout(Duration.ofMinutes(10))
                 .build();
-        return new LangChain4jModelPort(model, "ollama:" + props.model());
+        return new MeteredModelPort(new LangChain4jModelPort(model, "ollama:" + props.model()));
     }
 
     @Bean
@@ -65,7 +67,7 @@ class AgentConfig {
                 .numCtx(props.numCtx())
                 .timeout(Duration.ofMinutes(10)) // long generations (esp. auto-continuation) mustn't time out
                 .build();
-        return new LangChain4jStreamingModelPort(model, "ollama-stream:" + props.model());
+        return new MeteredStreamingModelPort(new LangChain4jStreamingModelPort(model, "ollama-stream:" + props.model()));
     }
 
     @Bean

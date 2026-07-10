@@ -24,8 +24,9 @@ cos:
   num-ctx: ${COS_NUM_CTX:262144}
   # RAG grounding gate: drop retrieved chunks below this cosine similarity (below it = "not in your docs").
   min-score: ${COS_MIN_SCORE:0.3}
-  # Optional Llama Guard model for input/output safety (applied via Trust.govern in a later step).
-  guard-model: ${COS_GUARD_MODEL:llama-guard3:1b}
+  # Optional Llama Guard model for input/output safety. Blank = disabled (fail-open). Set to e.g.
+  # llama-guard3:1b only after pulling the model into Ollama; applied via the Guard component.
+  guard-model: ${COS_GUARD_MODEL:}
   # Postgres + pgvector (RAG store). Defaults match docker/compose.yml.
   db-url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/chief_of_staff}
   db-user: ${DATABASE_USER:cos}
@@ -39,3 +40,6 @@ cos:
   whisper-cli: ${COS_WHISPER_CLI:whisper-cli}
   whisper-model: ${COS_WHISPER_MODEL:models/whisper/ggml-base.bin}
   whisper-language: ${COS_WHISPER_LANGUAGE:auto}
+  # Optional bearer-token gate. Blank = open (local dev). When set, clients must send
+  # `Authorization: Bearer <key>`; /health and /actuator stay open.
+  api-key: ${COS_API_KEY:}

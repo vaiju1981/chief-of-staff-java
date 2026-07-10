@@ -4,7 +4,9 @@ import dev.vaijanath.aiagent.rag.Embedder;
 import dev.vaijanath.aiagent.rag.RetrievedChunk;
 import dev.vaijanath.aiagent.store.jdbc.ConnectionSource;
 import dev.vaijanath.aiagent.store.pgvector.PgVectorRetriever;
+import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -31,24 +33,46 @@ public final class RagStore {
     private static final int CHUNK_OVERLAP = 120;
 
     private final PgVectorRetriever store; // null when unavailable
+    private final ConnectionSource connections; // reused for direct deletes (orphan cleanup)
     private final boolean enabled;
     private final double minScore;
 
     public RagStore(
             String dbUrl, String dbUser, String dbPassword, Embedder embedder, int dimensions, double minScore) {
         this.minScore = minScore;
+        ConnectionSource source = () -> DriverManager.getConnection(dbUrl, dbUser, dbPassword);
         PgVectorRetriever s = null;
         try {
-            ConnectionSource connections = () -> DriverManager.getConnection(dbUrl, dbUser, dbPassword);
-            s = new PgVectorRetriever(connections, embedder, dimensions);
+            s = new PgVectorRetriever(source, embedder, dimensions);
             s.ensureSchema();
             log.info("[rag] pgvector store ready ({} dims, min-score {})", dimensions, minScore);
         } catch (Exception e) {
             log.warn("[rag] pgvector unavailable ({}). RAG search disabled; researcher/notes still run "
                     + "with filesystem tools.", e.toString());
+            source = null;
         }
         this.store = s;
+        this.connections = source;
         this.enabled = s != null;
+    }
+
+    /** Drop every chunk for a source (by filename) — used to prune embeddings of deleted/renamed files. */
+    public int deleteBySource(String source) {
+        if (!enabled || connections == null) {
+            return 0;
+        }
+        try (Connection c = connections.get();
+                Statement st = c.createStatement()) {
+            int n = st.executeUpdate("DELETE FROM rag_vectors WHERE tenant = '" + TENANT
+                    + "' AND metadata->>'source' = '" + source.replace("'", "''") + "'");
+            if (n > 0) {
+                log.info("[rag] deleted {} chunk(s) for source {}", n, source);
+            }
+            return n;
+        } catch (Exception e) {
+            log.warn("[rag] deleteBySource failed for {}: {}", source, e.toString());
+            return 0;
+        }
     }
 
     public boolean enabled() {

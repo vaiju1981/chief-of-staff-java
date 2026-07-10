@@ -4,8 +4,10 @@ import dev.vaijanath.chiefofstaff.config.CosProperties;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 import org.slf4j.Logger;
@@ -42,6 +44,7 @@ class LibraryWatcher {
             return;
         }
         Path library = Path.of(props.dataDir(), "library");
+        Set<String> present = new HashSet<>();
         for (String category : CATEGORIES) {
             Path dir = library.resolve(category);
             if (!Files.isDirectory(dir)) {
@@ -50,9 +53,24 @@ class LibraryWatcher {
             try (Stream<Path> files = Files.list(dir)) {
                 files.filter(Files::isRegularFile)
                         .filter(TextExtraction::supported)
-                        .forEach(file -> maybeIngest(file, category));
+                        .forEach(file -> {
+                            present.add(file.toAbsolutePath().toString());
+                            maybeIngest(file, category);
+                        });
             } catch (IOException e) {
                 log.warn("[watcher] could not scan {}: {}", dir, e.toString());
+            }
+        }
+        pruneRemoved(present);
+    }
+
+    /** Remove embeddings for library files that disappeared since the last scan (renamed/deleted). */
+    private void pruneRemoved(Set<String> present) {
+        for (String key : new HashSet<>(seen.keySet())) {
+            if (!present.contains(key)) {
+                String source = Path.of(key).getFileName().toString();
+                rag.deleteBySource(source);
+                seen.remove(key);
             }
         }
     }

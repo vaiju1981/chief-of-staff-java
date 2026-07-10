@@ -11,10 +11,24 @@ if [ -f .env ]; then
 fi
 
 echo "→ Starting backends (Postgres + Open WebUI)..."
-if ! docker info >/dev/null 2>&1; then
-    echo "❌ No Docker/Colima daemon. Start it (e.g. 'colima start') and re-run." >&2
+if ! command -v docker >/dev/null 2>&1; then
+    echo "❌ Docker CLI not found. Install Docker or Colima and re-run." >&2
     exit 1
 fi
+
+DOCKER_INFO_OUTPUT="$(docker info 2>&1)" || {
+    echo "❌ Docker/Colima daemon is not reachable." >&2
+    echo "$DOCKER_INFO_OUTPUT" >&2
+    echo >&2
+    echo "Active Docker context:" >&2
+    docker context ls >&2 || true
+    echo >&2
+    echo "If you use Colima, try:" >&2
+    echo "  colima status" >&2
+    echo "  colima start" >&2
+    echo "  docker context use colima" >&2
+    exit 1
+}
 docker compose -f docker/compose.yml up -d
 
 echo "→ Building + starting the agent server on :8002..."

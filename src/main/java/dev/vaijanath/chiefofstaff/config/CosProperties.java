@@ -23,7 +23,8 @@ public record CosProperties(
         String tavilyApiKey,
         String whisperCli,
         String whisperModel,
-        String whisperLanguage) {
+        String whisperLanguage,
+        String apiKey) {
 
     public CosProperties {
         ollamaBaseUrl = blankTo(ollamaBaseUrl, "http://localhost:11434");
@@ -45,6 +46,7 @@ public record CosProperties(
         whisperCli = blankTo(whisperCli, "whisper-cli");
         whisperModel = blankTo(whisperModel, "models/whisper/ggml-base.bin");
         whisperLanguage = blankTo(whisperLanguage, "auto");
+        apiKey = strip(apiKey);
     }
 
     public boolean hasGuardModel() {
@@ -57,6 +59,10 @@ public record CosProperties(
 
     public boolean hasTavily() {
         return !tavilyApiKey.isBlank();
+    }
+
+    public boolean hasApiKey() {
+        return !apiKey.isBlank();
     }
 
     private static String blankTo(String value, String fallback) {
