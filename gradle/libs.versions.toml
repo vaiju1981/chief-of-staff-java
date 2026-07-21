@@ -8,7 +8,7 @@ junit = "6.1.0"
 langchain4j = "1.16.3"             # core; must match agent-langchain4j's transitive version
 langchain4jMcp = "1.16.3-beta26"   # matches java-ai-agent's catalog (MCP stdio client)
 postgresql = "42.7.11"
-tika = "2.9.2"                     # document text extraction (PDF / DOCX / PPTX / HTML)
+tika = "3.3.1"                     # document text extraction (PDF / DOCX / PPTX / HTML)
 
 [libraries]
 # java-ai-agent — the framework this app is built on (dogfooded).
